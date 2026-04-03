@@ -1,5 +1,5 @@
 #!/bin/bash
-# cmux-toolkit setup: installs broot + vim subpane integration for cmux
+# cmux-toolkit setup: viewtab browser tabs, manual Vim/edit, on-demand broot
 # Idempotent — safe to re-run after updates (git pull && bash setup.sh)
 set -euo pipefail
 
@@ -27,7 +27,7 @@ backup_and_link() {
     info "Linked $(basename "$dst")"
 }
 
-# ── 1. Check/install brew dependencies ──
+# ── 1. Check/install dependencies ──
 info "Checking dependencies..."
 for pkg in broot jq; do
     if ! command -v "$pkg" &>/dev/null; then
@@ -41,9 +41,14 @@ for pkg in broot jq; do
     fi
 done
 
+if ! command -v npx &>/dev/null; then
+    warn "npx not found — Markdown rendering in viewtab requires Node.js."
+    warn "Install Node.js: brew install node"
+fi
+
 # ── 2. Create runtime directories ──
 info "Creating directories..."
-mkdir -p ~/.claude/hooks ~/.claude/broot-panes ~/.claude/vim-panes ~/.vim ~/.config/broot/skins
+mkdir -p ~/.claude/hooks ~/.claude/broot-panes ~/.claude/vim-panes ~/.claude/view-surfaces ~/.vim ~/.config/broot/skins ~/.local/bin
 
 # ── 3. Fix broot verbs.hjson — replace __HOME__ placeholder with actual $HOME ──
 info "Preparing broot config..."
@@ -60,14 +65,24 @@ for hook in "$REPO_DIR"/hooks/*; do
     backup_and_link "$hook" "$HOME/.claude/hooks/$name"
 done
 
-# ── 5. Symlink broot config ──
+# ── 5. Symlink bin/ commands ──
+info "Linking bin/ commands..."
+for cmd in view edit; do
+    backup_and_link "$REPO_DIR/bin/$cmd" "$HOME/.local/bin/$cmd"
+done
+# Symlinks for tab-mode aliases
+for cmd in viewtab edittab; do
+    backup_and_link "$REPO_DIR/bin/$cmd" "$HOME/.local/bin/$cmd"
+done
+
+# ── 6. Symlink broot config ──
 info "Linking broot config..."
 backup_and_link "$REPO_DIR/config/broot/conf.hjson" "$HOME/.config/broot/conf.hjson"
 backup_and_link "$REPO_DIR/config/broot/verbs.hjson" "$HOME/.config/broot/verbs.hjson"
 backup_and_link "$REPO_DIR/config/broot/skins/skin-p10k.hjson" "$HOME/.config/broot/skins/skin-p10k.hjson"
 
-# ── 6. Handle Vim config ──
-info "Setting up Vim integration..."
+# ── 7. Handle Vim config (for manual edit/edittab) ──
+info "Setting up Vim integration (for edit/edittab)..."
 CLAUDE_SYNC="$REPO_DIR/config/vim/claude-sync.vim"
 backup_and_link "$CLAUDE_SYNC" "$HOME/.vim/claude-sync.vim"
 
@@ -86,7 +101,7 @@ else
     info "Created minimal .vimrc with claude-sync"
 fi
 
-# ── 7. Install vim-plug if needed ──
+# ── 8. Install vim-plug if needed ──
 if [[ ! -f "$HOME/.vim/autoload/plug.vim" ]]; then
     info "Installing vim-plug..."
     curl -fLo "$HOME/.vim/autoload/plug.vim" --create-dirs \
@@ -94,7 +109,7 @@ if [[ ! -f "$HOME/.vim/autoload/plug.vim" ]]; then
     info "vim-plug installed"
 fi
 
-# ── 8. Run broot --install (creates shell launcher) ──
+# ── 9. Run broot --install (creates shell launcher) ──
 if [[ ! -f "$HOME/.config/broot/launcher/bash/br" ]]; then
     info "Running broot --install..."
     broot --install 2>/dev/null || true
@@ -104,11 +119,13 @@ fi
 echo ""
 info "Setup complete!"
 echo ""
-echo "  Hooks:  ~/.claude/hooks/ ($(ls ~/.claude/hooks/*.sh ~/.claude/hooks/*.py 2>/dev/null | wc -l | tr -d ' ') files)"
-echo "  Broot:  ~/.config/broot/ (conf.hjson, verbs.hjson, skin)"
-echo "  Vim:    ~/.vim/claude-sync.vim (sourced from .vimrc)"
+echo "  Hooks:    ~/.claude/hooks/ ($(ls ~/.claude/hooks/*.sh ~/.claude/hooks/*.py 2>/dev/null | wc -l | tr -d ' ') files)"
+echo "  Commands: ~/.local/bin/{view,viewtab,edit,edittab}"
+echo "  Broot:    ~/.config/broot/ (conf.hjson, verbs.hjson, skin)"
+echo "  Vim:      ~/.vim/claude-sync.vim (for manual edit/edittab)"
 echo ""
 warn "Remaining manual steps (let Claude Code handle these):"
 echo "  1. Add broot-toggle keybind to .zshrc"
 echo "  2. Merge hooks into ~/.claude/settings.json"
-echo "  3. Run: source ~/.zshrc"
+echo "  3. Ensure ~/.local/bin is in PATH"
+echo "  4. Run: source ~/.zshrc"

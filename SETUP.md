@@ -1,11 +1,11 @@
 # cmux-toolkit Setup
 
-Paste this into Claude Code to set up the broot + vim subpane integration for cmux:
+Paste this into Claude Code to set up the toolkit:
 
 ---
 
 ```
-Set up the cmux-toolkit (broot file browser + vim subpane integration) for my cmux environment:
+Set up the cmux-toolkit (viewtab browser tabs, manual Vim, on-demand broot) for my cmux environment:
 
 1. Clone the repo:
    git clone https://github.com/Mirksen/cmux-toolkit.git ~/cmux-toolkit
@@ -26,34 +26,37 @@ Set up the cmux-toolkit (broot file browser + vim subpane integration) for my cm
    zle -N broot-toggle
    bindkey '\e[1;3A' broot-toggle
 
-4. Merge these hooks into my ~/.claude/settings.json (keep my existing
+4. Ensure ~/.local/bin is in PATH — add to .zshrc if not present:
+
+   export PATH="$HOME/.local/bin:$PATH"
+
+5. Merge these hooks into my ~/.claude/settings.json (keep my existing
    env, permissions, and model settings — only add/merge the hooks section):
 
    "hooks": {
      "UserPromptSubmit": [
-       { "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/vim-prompt-reset.sh" }] }
+       { "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/view-prompt-reset.sh" }] }
      ],
-     "SessionStart": [
-       { "matcher": "startup", "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/vim-pane-open-dispatch.sh" }] },
-       { "matcher": "startup", "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/broot-pane-open.sh" }] },
-       { "matcher": "resume",  "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/vim-pane-open-dispatch.sh" }] }
+     "PreToolUse": [
+       { "matcher": "Bash", "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/fix-whitespace-escape.py" }] }
      ],
      "PostToolUse": [
-       { "matcher": "Read|Edit|Write", "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/vim-open-file.py" }] }
+       { "matcher": "Edit|Write", "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/view-open-file.py" }] }
      ],
      "SessionEnd": [
-       { "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/vim-pane-close.sh" }] },
+       { "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/view-close.sh" }] },
        { "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/broot-pane-close.sh" }] }
      ]
    }
 
-5. Verify everything works:
+6. Verify everything works:
    - All symlinks in ~/.claude/hooks/ point to valid targets
+   - Commands available: viewtab --help, edit --help
    - broot starts: broot --version
    - Vim has claude-sync: grep claude-sync ~/.vimrc
-   - Signal file dir exists: ls ~/.vim/
+   - npx available: npx --version
 
-6. Tell me what manual steps remain.
+7. Tell me what manual steps remain.
 ```
 
 ---
@@ -61,9 +64,24 @@ Set up the cmux-toolkit (broot file browser + vim subpane integration) for my cm
 ## What it does
 
 After setup, every Claude Code session in cmux automatically gets:
-- **Vim subpane** (below) — files Claude reads/edits open here in real-time
-- **broot file browser** (left sidebar) — toggle with **Option + Arrow Up**
-- Selecting a file in broot opens it in the Vim subpane
+- **Browser tabs with diff highlighting** — files Claude edits appear as rendered browser tabs with changes highlighted in green
+- **Manual Vim** — open any file in Vim via `! edit file` or `! edittab file`
+- **Manual view** — render any file in browser via `! view file` or `! viewtab file`
+- **broot file browser** — toggle with **Option + Arrow Up** (on-demand, not automatic)
+
+## Optional: auto Vim subpane
+
+To also auto-open a Vim subpane on session start (old behavior), add these to the hooks in settings.json:
+
+```json
+"SessionStart": [
+  { "matcher": "startup", "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/vim-pane-open-dispatch.sh" }] },
+  { "matcher": "resume",  "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/vim-pane-open-dispatch.sh" }] }
+],
+"PostToolUse": [
+  { "matcher": "Read|Edit|Write", "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/vim-open-file.py" }] }
+]
+```
 
 ## Updating
 

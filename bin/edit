@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# edit / edittab — Open files in Vim via cmux
+# Usage: edit <file>      → Vim in new pane (split)
+#        edittab <file>   → Vim as tab in same pane
+
+set -euo pipefail
+
+# Detect mode from command name
+CMD_NAME=$(basename "$0")
+MODE="split"
+[[ "$CMD_NAME" == "edittab" ]] && MODE="tab"
+
+FILE="${1:-}"
+[[ -z "$FILE" ]] && echo "Usage: $CMD_NAME <file>" && exit 1
+
+# Resolve relative to cwd
+[[ "$FILE" != /* ]] && FILE="$(pwd)/$FILE"
+[[ ! -f "$FILE" ]] && echo "File not found: $FILE" && exit 1
+
+BASENAME=$(basename "$FILE")
+
+# Open based on mode
+if [[ "$MODE" == "tab" ]]; then
+  # Open Vim as terminal tab in our pane
+  IDENT=$(cmux identify 2>/dev/null || true)
+  OUR_PANE=$(echo "$IDENT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('caller',{}).get('pane_ref',''))" 2>/dev/null || true)
+  if [[ -n "$OUR_PANE" ]]; then
+    NEW_SURFACE=$(cmux new-surface --type terminal --pane "$OUR_PANE" 2>&1 | grep -o 'surface:[0-9]*' | head -1 || true)
+    if [[ -n "$NEW_SURFACE" ]]; then
+      cmux send --surface "$NEW_SURFACE" "vim \"$FILE\""
+      cmux send-key --surface "$NEW_SURFACE" Enter
+    fi
+  else
+    # Fallback: new split
+    NEW_SURFACE=$(cmux new-split down 2>&1 | grep -o 'surface:[0-9]*' | head -1 || true)
+    if [[ -n "$NEW_SURFACE" ]]; then
+      cmux send --surface "$NEW_SURFACE" "vim \"$FILE\""
+      cmux send-key --surface "$NEW_SURFACE" Enter
+    fi
+  fi
+else
+  # New split pane with Vim
+  NEW_SURFACE=$(cmux new-split down 2>&1 | grep -o 'surface:[0-9]*' | head -1 || true)
+  if [[ -n "$NEW_SURFACE" ]]; then
+    cmux send --surface "$NEW_SURFACE" "vim \"$FILE\""
+    cmux send-key --surface "$NEW_SURFACE" Enter
+  fi
+fi
+
+echo "Editing: ${BASENAME}"

@@ -10,12 +10,13 @@
 verbs: [
 
     ###########################################################
-    # Vim Integration (works with and without Claude Code)
-    # With Claude: sends path to Vim via signal file (IPC)
-    # Without Claude: opens Vim in a split pane below broot
+    # Open file (works with and without Claude Code)
+    # With Claude + Vim: sends path to Vim via signal file (IPC)
+    # With cmux + viewtab: opens rendered browser tab
+    # Without either: opens Vim in a split pane below broot
     ###########################################################
     {
-        invocation: vim-open
+        invocation: open-file
         key: enter
         apply_to: file
         external: [

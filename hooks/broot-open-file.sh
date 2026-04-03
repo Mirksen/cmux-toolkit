@@ -1,16 +1,27 @@
 #!/bin/bash
-# broot verb: open file in Vim
-# - With CLAUDE_SESSION_ID: write to signal file (Vim-pane picks it up)
-# - Without: open Vim in a split pane below, use signal file for subsequent files
+# broot verb: open file
+# - With CLAUDE_SESSION_ID + active Vim signal file: write to signal file (Vim picks it up)
+# - Otherwise: open file in viewtab (browser tab)
+# - Fallback (no cmux/viewtab): open Vim in a split pane below
 
 FILE="$1"
 
+# --- Path 1: Claude session with Vim signal file → Vim IPC ---
 if [[ -n "$CLAUDE_SESSION_ID" && "$CLAUDE_SESSION_ID" != "default" ]]; then
-    echo "$FILE" >> "$HOME/.vim/claude-open-file-$CLAUDE_SESSION_ID"
+    SIGNAL="$HOME/.vim/claude-open-file-$CLAUDE_SESSION_ID"
+    if [[ -f "$SIGNAL" ]]; then
+        echo "$FILE" >> "$SIGNAL"
+        exit 0
+    fi
+fi
+
+# --- Path 2: viewtab available → open as browser tab ---
+if command -v viewtab &>/dev/null && [[ -n "$CMUX_WORKSPACE_ID" ]]; then
+    viewtab "$FILE" &>/dev/null
     exit 0
 fi
 
-# Standalone mode — use a fixed signal file for non-Claude broot instances
+# --- Path 3: Standalone mode — open Vim in a split pane ---
 SIGNAL="$HOME/.vim/claude-open-file-standalone"
 MARKER="$HOME/.claude/broot-panes/standalone-vim-tty"
 
