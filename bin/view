@@ -160,6 +160,9 @@ for i, line in enumerate(lines, 1):
     ;;
 esac
 
+# Append source path as URL fragment (visible in address bar, no effect on rendering)
+[[ -n "$URL" && "$URL" == file:///tmp/* ]] && URL="${URL}#source=${FILE}"
+
 # --- Open based on mode ---
 if [[ "$MODE" == "tab" ]]; then
   # Use cmux identify to reliably get our pane and surface
