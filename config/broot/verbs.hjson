@@ -47,19 +47,6 @@ verbs: [
         leave_broot: false
     }
 
-    # Right arrow → expand directory inline (VS Code-like)
-    {
-        key: right
-        apply_to: directory
-        internal: ":open_stay"
-    }
-
-    # Left arrow → go back (restores previous state + selection)
-    {
-        key: left
-        internal: ":back"
-    }
-
     # Ctrl+P → toggle file preview panel
     {
         invocation: preview
