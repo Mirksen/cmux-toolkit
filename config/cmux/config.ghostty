@@ -1,0 +1,48 @@
+# Ghostty config for CMux — dark theme with inactive pane dimming
+#
+# Install: copy to ~/Library/Application Support/com.cmuxterm.app/config.ghostty
+# Or symlink: ln -sf ~/cmux-toolkit/config/cmux/config.ghostty \
+#              ~/Library/Application\ Support/com.cmuxterm.app/config.ghostty
+
+# Font — MesloLGS Nerd Font (install via: brew install font-meslo-lg-nerd-font)
+font-family = MesloLGS NF
+font-size = 18
+
+# Background / Foreground
+background = #080808
+foreground = #cccccc
+
+# Cursor
+cursor-color = #d0d0d0
+cursor-text = #151515
+
+# Selection
+selection-background = #770001
+selection-foreground = #ececec
+
+# ANSI Normal (0-7)
+palette = 0=#000000
+palette = 1=#d60005
+palette = 2=#1cd815
+palette = 3=#d9bc25
+palette = 4=#5665fe
+palette = 5=#af51d9
+palette = 6=#4fd2d9
+palette = 7=#dfdfdf
+
+# ANSI Bright (8-15)
+palette = 8=#535353
+palette = 9=#fb0006
+palette = 10=#21fe17
+palette = 11=#fedc2b
+palette = 12=#9fa8fe
+palette = 13=#e099fe
+palette = 14=#8cf9fe
+palette = 15=#fffefe
+
+# macOS Option key = normal (not Alt) — needed for Opt+ArrowUp broot toggle
+macos-option-as-alt = false
+
+# Inactive pane dimming — gray fill + 75% opacity makes unfocused panes visually recede
+unfocused-split-fill = #444444
+unfocused-split-opacity = 0.75

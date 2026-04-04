@@ -140,6 +140,8 @@ cmux-toolkit/
 │   ├── vim-*.sh / vim-*.py     # Optional Vim subpane lifecycle
 │   └── fix-whitespace-escape.py  # iCloud path fix
 ├── config/
+│   ├── cmux/
+│   │   └── config.ghostty      # Dark theme + inactive pane dimming
 │   ├── broot/                  # broot configuration
 │   │   ├── conf.hjson
 │   │   ├── verbs.hjson         # Enter key → open-file verb
@@ -150,6 +152,20 @@ cmux-toolkit/
 ├── SETUP.md                    # Copy-paste instructions for Claude Code
 └── README.md
 ```
+
+## Terminal theme
+
+The toolkit includes a dark Ghostty theme with **inactive pane dimming** — unfocused panes get a gray overlay so the active pane stands out visually.
+
+Install:
+```bash
+cp ~/cmux-toolkit/config/cmux/config.ghostty \
+   ~/Library/Application\ Support/com.cmuxterm.app/config.ghostty
+```
+
+Or let `setup.sh` handle it (symlinks automatically).
+
+The theme uses MesloLGS Nerd Font — install via `brew install font-meslo-lg-nerd-font`.
 
 ## Requirements
 

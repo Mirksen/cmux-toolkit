@@ -81,7 +81,16 @@ backup_and_link "$REPO_DIR/config/broot/conf.hjson" "$HOME/.config/broot/conf.hj
 backup_and_link "$REPO_DIR/config/broot/verbs.hjson" "$HOME/.config/broot/verbs.hjson"
 backup_and_link "$REPO_DIR/config/broot/skins/skin-p10k.hjson" "$HOME/.config/broot/skins/skin-p10k.hjson"
 
-# ── 7. Handle Vim config (for manual edit/edittab) ──
+# ── 7. Symlink cmux Ghostty config (dark theme + dimming) ──
+info "Linking cmux theme..."
+CMUX_CONFIG_DIR="$HOME/Library/Application Support/com.cmuxterm.app"
+if [[ -d "$CMUX_CONFIG_DIR" ]]; then
+    backup_and_link "$REPO_DIR/config/cmux/config.ghostty" "$CMUX_CONFIG_DIR/config.ghostty"
+else
+    warn "cmux config dir not found — skipping theme. Install cmux first, then re-run setup."
+fi
+
+# ── 8. Handle Vim config (for manual edit/edittab) ──
 info "Setting up Vim integration (for edit/edittab)..."
 CLAUDE_SYNC="$REPO_DIR/config/vim/claude-sync.vim"
 backup_and_link "$CLAUDE_SYNC" "$HOME/.vim/claude-sync.vim"
@@ -101,7 +110,7 @@ else
     info "Created minimal .vimrc with claude-sync"
 fi
 
-# ── 8. Install vim-plug if needed ──
+# ── 9. Install vim-plug if needed ──
 if [[ ! -f "$HOME/.vim/autoload/plug.vim" ]]; then
     info "Installing vim-plug..."
     curl -fLo "$HOME/.vim/autoload/plug.vim" --create-dirs \
@@ -109,7 +118,7 @@ if [[ ! -f "$HOME/.vim/autoload/plug.vim" ]]; then
     info "vim-plug installed"
 fi
 
-# ── 9. Run broot --install (creates shell launcher) ──
+# ── 10. Run broot --install (creates shell launcher) ──
 if [[ ! -f "$HOME/.config/broot/launcher/bash/br" ]]; then
     info "Running broot --install..."
     broot --install 2>/dev/null || true
@@ -121,6 +130,7 @@ info "Setup complete!"
 echo ""
 echo "  Hooks:    ~/.claude/hooks/ ($(ls ~/.claude/hooks/*.sh ~/.claude/hooks/*.py 2>/dev/null | wc -l | tr -d ' ') files)"
 echo "  Commands: ~/.local/bin/{view,viewtab,edit,edittab}"
+echo "  Theme:    ~/Library/Application Support/com.cmuxterm.app/config.ghostty"
 echo "  Broot:    ~/.config/broot/ (conf.hjson, verbs.hjson, skin)"
 echo "  Vim:      ~/.vim/claude-sync.vim (for manual edit/edittab)"
 echo ""
