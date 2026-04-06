@@ -332,6 +332,7 @@ summary::-webkit-details-marker { display: none; }
 summary::before { content: "\\25B6"; font-size: 0.7em; margin-right: 0.5rem; transition: transform 0.15s; }
 details[open] > summary::before { transform: rotate(90deg); }
 summary .count { padding: 0.1rem 0.4rem; border-radius: 3px; margin-left: auto; font-size: 0.85em; }
+summary .diff-toggle + .count { margin-left: 0; }
 summary .count-n { background: var(--diff-bg); color: var(--diff-fg); }
 summary .count-m { background: var(--mod-bg); color: var(--mod-fg); }
 summary .count-w { background: var(--del-bg); color: var(--del-fg); }
@@ -369,7 +370,7 @@ pre .diff-del-line { background: var(--del-bg); border-left: 3px solid var(--del
 pre .diff-del-line:hover { filter: brightness(0.95); }
 .line-skip { display: block; text-align: center; color: var(--fg-muted); font-size: 0.85em; padding: 2px 0; opacity: 0.6; cursor: pointer; user-select: none; }
 .line-skip:hover { opacity: 1; background: var(--hover); }
-.diff-toggle { font-size: 11px; padding: 2px 8px; border-radius: 3px; border: 1px solid var(--border); background: var(--surface); color: var(--fg-muted); cursor: pointer; margin-left: 8px; }
+.diff-toggle { font-size: 11px; padding: 2px 8px; border-radius: 3px; border: 1px solid var(--border); background: var(--surface); color: var(--fg-muted); cursor: pointer; margin-left: auto; margin-right: 8px; }
 .diff-toggle:hover { background: var(--hover); color: var(--fg); }
 """
 
@@ -419,11 +420,11 @@ function toggleFullFile(idx) {
   if (full.style.display === 'none') {
     collapsed.style.display = 'none';
     full.style.display = '';
-    if (btn) btn.textContent = 'changes only';
+    if (btn) btn.textContent = 'Show changes only';
   } else {
     collapsed.style.display = '';
     full.style.display = 'none';
-    if (btn) btn.textContent = 'full file';
+    if (btn) btn.textContent = 'Show full file';
   }
 }
 function clearActiveNav() {
@@ -502,7 +503,7 @@ for fp in file_order:
     count_cls = f"count count-{status.lower()}"
     count_badge = f'<span class="{count_cls}">{count_text}</span>'
     file_idx = file_order.index(fp)
-    toggle_btn = f'<button class="diff-toggle" onclick="event.stopPropagation();toggleFullFile({file_idx})">full file</button>' if edit_strings and status != "N" else ""
+    toggle_btn = f'<button class="diff-toggle" onclick="event.stopPropagation();toggleFullFile({file_idx})">Show full file</button>' if edit_strings and status != "N" else ""
     parts.append(f'<details open>')
     parts.append(f'<summary><strong>{basename}</strong><span class="filepath">{rel_path}</span>{toggle_btn}{count_badge}</summary>')
     parts.append('<div class="file-content">')
@@ -551,10 +552,27 @@ for fp in file_order:
     else:
         lines = content.split("\n")
         file_idx = file_order.index(fp)
-        # Map extension to Prism language class
+        # Determine language for Prism syntax highlighting
+        diff_lang_map = {"py": "python", "sh": "bash", "bash": "bash", "zsh": "bash",
+                         "js": "javascript", "ts": "typescript", "json": "json",
+                         "yaml": "yaml", "yml": "yaml", "toml": "toml",
+                         "html": "markup", "css": "css", "go": "go", "rs": "rust",
+                         "rb": "ruby", "java": "java", "c": "c", "cpp": "cpp",
+                         "sql": "sql", "hjson": "json"}
+        diff_lang = diff_lang_map.get(ext, "")
+        if not diff_lang:
+            first_line = lines[0] if lines else ""
+            if first_line.startswith("#!"):
+                shebang = first_line.lower()
+                if "python" in shebang: diff_lang = "python"
+                elif "bash" in shebang or "/sh" in shebang: diff_lang = "bash"
+                elif "node" in shebang: diff_lang = "javascript"
+                elif "ruby" in shebang: diff_lang = "ruby"
+        diff_lang_cls = f' class="language-{diff_lang}"' if diff_lang else ""
+
         if is_new_file:
-            code_lines = [f'<span class="line diff-line">{html.escape(l)}</span>' for l in lines]
-            parts.append(f'<pre><code>{chr(10).join(code_lines)}</code></pre>')
+            # Raw code with language class; JS will wrap lines with diff-line after Prism highlights
+            parts.append(f'<pre><code{diff_lang_cls} data-diff-type="new-file">{html.escape(content)}</code></pre>')
         else:
             highlight_lines = set()
             deleted_blocks = []
@@ -575,45 +593,15 @@ for fp in file_order:
             for insert_at, old_lines in deleted_blocks:
                 del_before[insert_at] = old_lines
 
-            # Build all lines with diff markers
-            all_code_lines = []
-            all_types = []
-            for i, line in enumerate(lines):
-                if i in del_before:
-                    for dl in del_before[i]:
-                        all_code_lines.append(f'<span class="line diff-del-line">{html.escape(dl)}</span>')
-                        all_types.append("del")
-                escaped = html.escape(line)
-                if i in highlight_lines:
-                    all_code_lines.append(f'<span class="line diff-line">{escaped}</span>')
-                    all_types.append("new")
-                else:
-                    all_code_lines.append(f'<span class="line">{escaped}</span>')
-                    all_types.append("ctx")
+            line_types = ["new" if i in highlight_lines else "ctx" for i in range(len(lines))]
+            del_json = {str(k): v for k, v in del_before.items()}
+            meta = json.dumps({"types": line_types, "deleted": del_json, "context": 3, "idx": file_idx})
 
-            # Collapsed view: only changed lines + 3 lines context
-            CONTEXT = 3
-            important = set()
-            for i, t in enumerate(all_types):
-                if t in ("new", "del"):
-                    for j in range(max(0, i - CONTEXT), min(len(all_types), i + CONTEXT + 1)):
-                        important.add(j)
-
-            collapsed_lines = []
-            last_shown = -1
-            for i, line_html in enumerate(all_code_lines):
-                if i in important:
-                    if last_shown >= 0 and i > last_shown + 1:
-                        skipped = i - last_shown - 1
-                        collapsed_lines.append(f'<span class="line-skip">--- {skipped} lines hidden ---</span>')
-                    collapsed_lines.append(line_html)
-                    last_shown = i
-            if last_shown < len(all_code_lines) - 1:
-                skipped = len(all_code_lines) - last_shown - 1
-                collapsed_lines.append(f'<span class="line-skip">--- {skipped} lines hidden ---</span>')
-
-            parts.append(f'<div id="diff-collapsed-{file_idx}"><pre><code>{chr(10).join(collapsed_lines)}</code></pre></div>')
-            parts.append(f'<div id="diff-full-{file_idx}" style="display:none"><pre><code>{chr(10).join(all_code_lines)}</code></pre></div>')
+            # Hidden source block for Prism to highlight; JS builds collapsed/full views from it
+            parts.append(f'<div id="diff-source-{file_idx}" style="display:none"><pre><code{diff_lang_cls} data-diff-idx="{file_idx}">{html.escape(content)}</code></pre></div>')
+            parts.append(f'<script type="application/json" id="diff-meta-{file_idx}">{meta}</script>')
+            parts.append(f'<div id="diff-collapsed-{file_idx}"></div>')
+            parts.append(f'<div id="diff-full-{file_idx}" style="display:none"></div>')
 
     parts.append("</div></details>")
 
@@ -686,12 +674,136 @@ for i, fp in enumerate(all_tree_files):
 parts.append('</div>')  # close .main
 
 parts.append(f'<script>{JS}</script>')
-# Prism.js — only for viewer files (non-edited files opened from explorer)
+# Prism.js
 parts.append('<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/line-numbers/prism-line-numbers.min.css" />')
+parts.append('<script>window.Prism = window.Prism || {}; Prism.manual = true;</script>')
 parts.append('<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>')
 parts.append('<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/line-numbers/prism-line-numbers.min.js"></script>')
 for lang in ["python", "bash", "javascript", "typescript", "json", "yaml", "toml", "markup", "css", "go", "rust", "java", "ruby", "sql", "c", "cpp"]:
     parts.append(f'<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-{lang}.min.js"></script>')
+
+# Post-Prism: apply diff line wrapping to syntax-highlighted code
+parts.append("""<script>
+(function() {
+  // Trigger Prism highlighting before post-processing diff blocks
+  Prism.highlightAll(false);
+
+  // Helper: split highlighted HTML by newlines, preserving open span tags across lines
+  function splitHighlightedLines(html) {
+    var lines = html.split('\\n');
+    var result = [];
+    var openSpans = [];
+    for (var i = 0; i < lines.length; i++) {
+      // Prepend any open spans from previous line
+      var prefix = openSpans.join('');
+      var line = lines[i];
+      // Track open/close spans in this line
+      var tags = line.match(/<\\/?span[^>]*>/g) || [];
+      for (var j = 0; j < tags.length; j++) {
+        if (tags[j].indexOf('</') === 0) {
+          openSpans.pop();
+        } else {
+          openSpans.push(tags[j]);
+        }
+      }
+      // Close any open spans at end of line
+      var suffix = '';
+      for (var k = openSpans.length - 1; k >= 0; k--) { suffix += '</span>'; }
+      result.push(prefix + line + suffix);
+    }
+    return result;
+  }
+
+  // Helper: highlight deleted lines using Prism if language is available
+  function highlightDeleted(lines, lang) {
+    if (!lang || !Prism.languages[lang]) return lines.map(function(l) {
+      var d = document.createElement('span');
+      d.textContent = l;
+      return d.innerHTML;
+    });
+    var code = lines.join('\\n');
+    var highlighted = Prism.highlight(code, Prism.languages[lang], lang);
+    return splitHighlightedLines(highlighted);
+  }
+
+  // Process new-file blocks: wrap every line in diff-line
+  document.querySelectorAll('code[data-diff-type="new-file"]').forEach(function(codeEl) {
+    var highlighted = codeEl.innerHTML;
+    var lines = splitHighlightedLines(highlighted);
+    codeEl.innerHTML = lines.map(function(l) {
+      return '<span class="line diff-line">' + l + '</span>';
+    }).join('\\n');
+  });
+
+  // Process modified-file blocks: build collapsed + full views
+  document.querySelectorAll('code[data-diff-idx]').forEach(function(codeEl) {
+    var idx = parseInt(codeEl.getAttribute('data-diff-idx'));
+    var metaScript = document.getElementById('diff-meta-' + idx);
+    if (!metaScript) return;
+    var meta = JSON.parse(metaScript.textContent);
+    var types = meta.types;
+    var deleted = meta.deleted;
+    var CONTEXT = meta.context;
+    var lang = '';
+    var cls = codeEl.className || '';
+    var m = cls.match(/language-(\\w+)/);
+    if (m) lang = m[1];
+
+    var highlighted = codeEl.innerHTML;
+    var hLines = splitHighlightedLines(highlighted);
+
+    // Build all lines with diff markers (matching original Python logic)
+    var allLines = [];
+    var allTypes = [];
+    for (var i = 0; i < hLines.length; i++) {
+      if (deleted[String(i)]) {
+        var delHL = highlightDeleted(deleted[String(i)], lang);
+        for (var d = 0; d < delHL.length; d++) {
+          allLines.push('<span class="line diff-del-line">' + delHL[d] + '</span>');
+          allTypes.push('del');
+        }
+      }
+      var cls = (types[i] === 'new') ? 'line diff-line' : 'line';
+      allLines.push('<span class="' + cls + '">' + hLines[i] + '</span>');
+      allTypes.push(types[i]);
+    }
+
+    // Build collapsed view
+    var important = new Set();
+    for (var i = 0; i < allTypes.length; i++) {
+      if (allTypes[i] === 'new' || allTypes[i] === 'del') {
+        for (var j = Math.max(0, i - CONTEXT); j < Math.min(allTypes.length, i + CONTEXT + 1); j++) {
+          important.add(j);
+        }
+      }
+    }
+    var collapsedLines = [];
+    var lastShown = -1;
+    for (var i = 0; i < allLines.length; i++) {
+      if (important.has(i)) {
+        if (lastShown >= 0 && i > lastShown + 1) {
+          var skipped = i - lastShown - 1;
+          collapsedLines.push('<span class="line-skip">--- ' + skipped + ' lines hidden ---</span>');
+        }
+        collapsedLines.push(allLines[i]);
+        lastShown = i;
+      }
+    }
+    if (lastShown < allLines.length - 1) {
+      var skipped = allLines.length - lastShown - 1;
+      collapsedLines.push('<span class="line-skip">--- ' + skipped + ' lines hidden ---</span>');
+    }
+
+    // Populate collapsed and full divs (include language class so Prism CSS selectors match)
+    var langCls = lang ? ' class="language-' + lang + '"' : '';
+    var collapsedDiv = document.getElementById('diff-collapsed-' + idx);
+    var fullDiv = document.getElementById('diff-full-' + idx);
+    if (collapsedDiv) collapsedDiv.innerHTML = '<pre><code' + langCls + '>' + collapsedLines.join('\\n') + '</code></pre>';
+    if (fullDiv) fullDiv.innerHTML = '<pre><code' + langCls + '>' + allLines.join('\\n') + '</code></pre>';
+  });
+})();
+</script>""")
+
 parts.append("</body></html>")
 
 # --- Write combined HTML ---
