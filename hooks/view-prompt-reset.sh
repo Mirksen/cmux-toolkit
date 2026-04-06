@@ -9,8 +9,13 @@ INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
 [[ -z "$SESSION_ID" ]] && exit 0
 
-# Clear the changes log
-rm -f "$VIEW_CHANGES_DIR/${SESSION_ID}.jsonl" 2>/dev/null
+# Append current changes to cumulative session log before clearing
+PROMPT_LOG="$VIEW_CHANGES_DIR/${SESSION_ID}.jsonl"
+SESSION_LOG="$VIEW_CHANGES_DIR/${SESSION_ID}-all.jsonl"
+if [[ -s "$PROMPT_LOG" ]]; then
+    cat "$PROMPT_LOG" >> "$SESSION_LOG"
+fi
+rm -f "$PROMPT_LOG" 2>/dev/null
 
 # Navigate existing browser tab to a blank "waiting" page
 TRACKING_FILE="$VIEW_SURFACES_DIR/${SESSION_ID}.txt"

@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# viewall — Show all changes from the current AI session in a browser tab.
+# Combines the current prompt's changes with all previous prompts' changes
+# and renders them using view-open-file.py's combined diff view.
+#
+# Usage: viewall            (auto-detects session from most recent changes)
+#        viewall <session>  (explicit session ID)
+
+set -euo pipefail
+
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+
+# Clean up logs older than 24h
+find "$VIEW_CHANGES_DIR" -name '*-all.jsonl' -mtime +1 -delete 2>/dev/null
+find "$VIEW_CHANGES_DIR" -name '*.jsonl' -mtime +1 -delete 2>/dev/null
+
+SESSION_ID="${1:-$(cmux_session_id)}"
+
+# Auto-detect: find the most recently modified changes log
+if [[ "$SESSION_ID" == "default" ]]; then
+    LATEST=$(ls -t "$VIEW_CHANGES_DIR"/*.jsonl 2>/dev/null | grep -v '\-all\.jsonl$' | head -1)
+    if [[ -z "$LATEST" ]]; then
+        echo "No changes found. Run an AI session first."
+        exit 0
+    fi
+    SESSION_ID=$(basename "$LATEST" .jsonl)
+fi
+
+PROMPT_LOG="$VIEW_CHANGES_DIR/${SESSION_ID}.jsonl"
+SESSION_LOG="$VIEW_CHANGES_DIR/${SESSION_ID}-all.jsonl"
+
+# Build a combined log: all previous prompts + current prompt
+COMBINED=$(mktemp)
+[[ -f "$SESSION_LOG" ]] && cat "$SESSION_LOG" >> "$COMBINED"
+[[ -f "$PROMPT_LOG" ]] && cat "$PROMPT_LOG" >> "$COMBINED"
+
+if [[ ! -s "$COMBINED" ]]; then
+    rm -f "$COMBINED"
+    echo "No changes recorded for session ${SESSION_ID:0:8}..."
+    exit 0
+fi
+
+# Write combined log as a separate session for the renderer
+ALL_ID="${SESSION_ID}-all"
+ALL_LOG="$VIEW_CHANGES_DIR/${ALL_ID}.jsonl"
+cp "$COMBINED" "$ALL_LOG"
+rm -f "$COMBINED"
+
+# Run the renderer
+FIRST_FILE=$(head -1 "$ALL_LOG" | python3 -c "import json,sys; print(json.load(sys.stdin).get('file',''))" 2>/dev/null)
+echo "{\"session_id\":\"${ALL_ID}\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${FIRST_FILE}\"}}" \
+    | python3 "$HOME/.cmux-toolkit/hooks/view-open-file.py" 2>/dev/null
+
+# Open or navigate the browser tab
+OUT_FILE="/tmp/view-changes-${ALL_ID}.html"
+TRACKING_FILE="$VIEW_SURFACES_DIR/${ALL_ID}.txt"
+
+if [[ ! -f "$OUT_FILE" ]]; then
+    echo "Render failed — no HTML generated."
+    exit 1
+fi
+
+URL="file://${OUT_FILE}?t=$(date +%s)"
+NAVIGATED=false
+
+# Try to reuse existing surface
+if [[ -f "$TRACKING_FILE" ]]; then
+    SURFACE=$(tail -1 "$TRACKING_FILE" | tr -d '[:space:]')
+    if [[ -n "$SURFACE" ]] && cmux browser --surface "$SURFACE" navigate "$URL" 2>/dev/null; then
+        NAVIGATED=true
+    fi
+fi
+
+# Create new tab if needed
+if [[ "$NAVIGATED" != "true" ]]; then
+    OUTPUT=$(viewtab "$OUT_FILE" 2>/dev/null)
+    SURFACE_REF=$(echo "$OUTPUT" | grep -oE 'surface:[0-9]+' | head -1)
+    if [[ -n "$SURFACE_REF" ]]; then
+        mkdir -p "$VIEW_SURFACES_DIR"
+        echo "$SURFACE_REF" > "$TRACKING_FILE"
+    fi
+fi
+
+echo "Rendered all session changes (${SESSION_ID:0:8}...)"

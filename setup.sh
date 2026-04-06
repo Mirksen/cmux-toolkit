@@ -88,7 +88,7 @@ done
 
 # ── 5. Symlink bin/ commands ──
 info "Linking bin/ commands..."
-for cmd in view edit render-md; do
+for cmd in view edit render-md changes; do
     backup_and_link "$REPO_DIR/bin/$cmd" "$HOME/.local/bin/$cmd"
 done
 # Symlinks for tab-mode aliases (these are symlinks in the repo: viewtab→view, edittab→edit)
@@ -155,7 +155,7 @@ fi
 # ── 11. Claude Code settings.json — auto-merge hooks ──
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 info "Configuring Claude Code hooks..."
-CMUX_HOOKS='{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"bash ~/.claude/hooks/view-prompt-reset.sh"}]}],"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"python3 ~/.claude/hooks/fix-whitespace-escape.py"}]}],"PostToolUse":[{"matcher":"Edit|Write","hooks":[{"type":"command","command":"python3 ~/.claude/hooks/view-open-file.py"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"bash ~/.claude/hooks/session-cleanup.sh"}]}]}'
+CMUX_HOOKS='{"SessionStart":[{"matcher":"startup|resume","hooks":[{"type":"command","command":"bash ~/.claude/hooks/session-init.sh"}]}],"UserPromptSubmit":[{"hooks":[{"type":"command","command":"bash ~/.claude/hooks/view-prompt-reset.sh"}]}],"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"python3 ~/.claude/hooks/fix-whitespace-escape.py"}]}],"PostToolUse":[{"matcher":"Edit|Write","hooks":[{"type":"command","command":"python3 ~/.claude/hooks/view-open-file.py"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"bash ~/.claude/hooks/session-cleanup.sh"}]}]}'
 
 if [[ -f "$CLAUDE_SETTINGS" ]]; then
     # Merge hooks into existing settings (preserves all other keys)

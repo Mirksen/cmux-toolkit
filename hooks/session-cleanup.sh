@@ -37,4 +37,7 @@ if [[ -f "$TRACKING_FILE" ]]; then
     rm -f "$TRACKING_FILE"
 fi
 
+# --- Clean up changes logs ---
+rm -f "$VIEW_CHANGES_DIR/${SESSION_ID}.jsonl" "$VIEW_CHANGES_DIR/${SESSION_ID}-all.jsonl" 2>/dev/null
+
 exit 0

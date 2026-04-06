@@ -92,6 +92,13 @@ const server: Plugin = async (ctx) => {
       const event = input.event as any
       const type = event?.type || ""
 
+      if (type === "session.created" && event.properties?.sessionID) {
+        runHook("session-init.sh", {
+          session_id: event.properties.sessionID,
+          cwd: ctx.directory,
+        })
+      }
+
       if (type === "session.deleted" && event.properties?.sessionID) {
         const payload = {
           session_id: event.properties.sessionID,
