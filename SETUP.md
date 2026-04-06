@@ -1,5 +1,7 @@
 # cmux-toolkit Setup
 
+## Claude Code
+
 Paste this into Claude Code to set up the toolkit:
 
 ---
@@ -20,7 +22,7 @@ Set up the cmux-toolkit (viewtab browser tabs, manual Vim, on-demand broot) for 
    # === broot sidebar toggle (Opt+ArrowUp) ===
    source "$HOME/.config/broot/launcher/bash/br"
    broot-toggle() {
-       bash ~/.claude/hooks/broot-pane.sh
+       bash ~/.cmux-toolkit/hooks/broot-pane.sh
        zle reset-prompt
    }
    zle -N broot-toggle
@@ -49,10 +51,10 @@ Set up the cmux-toolkit (viewtab browser tabs, manual Vim, on-demand broot) for 
    }
 
 6. Verify everything works:
-   - All symlinks in ~/.claude/hooks/ point to valid targets
+   - All symlinks in ~/.cmux-toolkit/hooks/ point to valid targets
    - Commands available: viewtab --help, edit --help
    - broot starts: broot --version
-   - Vim has claude-sync: grep claude-sync ~/.vimrc
+   - Vim has cmux-sync: grep cmux-sync ~/.vimrc
    - npx available: npx --version
 
 7. Tell me what manual steps remain.
@@ -60,15 +62,23 @@ Set up the cmux-toolkit (viewtab browser tabs, manual Vim, on-demand broot) for 
 
 ---
 
+## OpenCode
+
+After running `setup.sh`, OpenCode support is automatic — the adapter plugin is symlinked to `~/.config/opencode/plugins/cmux-toolkit` and loaded on startup. No extra configuration needed.
+
+Add the broot-toggle keybind to your `.zshrc` (same as Claude Code step 3 above), and ensure `~/.local/bin` is in your PATH.
+
+---
+
 ## What it does
 
-After setup, every Claude Code session in cmux automatically gets:
-- **Browser tabs with diff highlighting** — files Claude edits appear as rendered browser tabs with changes highlighted in green
+After setup, every AI coding session in cmux automatically gets:
+- **Browser tabs with diff highlighting** — files edited appear as rendered browser tabs with changes highlighted in green
 - **Manual Vim** — open any file in Vim via `! edit file` or `! edittab file`
 - **Manual view** — render any file in browser via `! view file` or `! viewtab file`
 - **broot file browser** — toggle with **Option + Arrow Up** (on-demand, not automatic)
 
-## Optional: auto Vim subpane
+## Optional: auto Vim subpane (Claude Code)
 
 To also auto-open a Vim subpane on session start (old behavior), add these to the hooks in settings.json:
 

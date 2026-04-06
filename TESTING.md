@@ -2,7 +2,7 @@
 
 ## Test 1: Combined diff view (basic)
 
-Paste this prompt into a Claude Code session to verify the combined browser view with sidebar and diff highlighting.
+Paste this prompt into a Claude Code or OpenCode session to verify the combined browser view with sidebar and diff highlighting.
 
 ---
 

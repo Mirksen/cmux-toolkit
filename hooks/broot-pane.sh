@@ -3,23 +3,24 @@
 # Usage:
 #   bash broot-pane.sh          — toggle (keybind, e.g. Opt+E)
 #   bash broot-pane.sh --open   — open only, reads hook JSON from stdin (SessionStart)
+# Works with Claude Code, OpenCode, and any tool that sets CMUX_SESSION_ID.
+
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
 
 [[ -z "$CMUX_WORKSPACE_ID" ]] && exit 0
 
 MODE="toggle"
 [[ "$1" == "--open" ]] && MODE="open"
 
-MARKER="$HOME/.claude/broot-pane-id"
-
 # --- Toggle: close if already open ---
-if [[ "$MODE" == "toggle" && -f "$MARKER" ]]; then
-    BROOT_PANE=$(cat "$MARKER")
+if [[ "$MODE" == "toggle" && -f "$BROOT_MARKER" ]]; then
+    BROOT_PANE=$(cat "$BROOT_MARKER")
     if cmux tree 2>/dev/null | grep -q "$BROOT_PANE"; then
         cmux close-surface --surface "$BROOT_PANE" 2>/dev/null
-        rm -f "$MARKER"
+        rm -f "$BROOT_MARKER"
         exit 0
     fi
-    rm -f "$MARKER"  # stale marker
+    rm -f "$BROOT_MARKER"  # stale marker
 fi
 
 # --- Open broot in a left split ---
@@ -31,24 +32,22 @@ if [[ "$MODE" == "open" ]]; then
     sleep 0.5  # let Vim pane settle (vim-pane-open runs first)
 else
     CWD=$(pwd)
-    SESSION_ID="${CLAUDE_SESSION_ID:-default}"
+    SESSION_ID="$(cmux_session_id)"
 fi
 
-# Get Claude's pane ref for refocus later
-CLAUDE_PANE=$(cmux identify 2>/dev/null | jq -r '.caller.pane_ref' 2>/dev/null)
+# Get caller pane ref for refocus later
+CALLER_PANE=$(cmux identify 2>/dev/null | jq -r '.caller.pane_ref' 2>/dev/null)
 
 # Create left split
 RESULT=$(cmux new-split left --surface "${CMUX_SURFACE_ID:-}" 2>&1)
 BROOT_SURFACE=$(echo "$RESULT" | grep -oE 'surface:[0-9a-zA-Z-]+' | head -1)
 
 if [[ -n "$BROOT_SURFACE" ]]; then
-    echo "$BROOT_SURFACE" > "$MARKER"
-    sleep 0.5
-    cmux send --surface "$BROOT_SURFACE" "CLAUDE_SESSION_ID='$SESSION_ID' exec broot '$CWD'" 2>/dev/null
-    cmux send-key --surface "$BROOT_SURFACE" Enter 2>/dev/null
+    echo "$BROOT_SURFACE" > "$BROOT_MARKER"
+    cmux respawn-pane --surface "$BROOT_SURFACE" --command "CMUX_SESSION_ID='$SESSION_ID' exec broot '$CWD'" 2>/dev/null
 fi
 
-# Refocus Claude pane
-[[ -n "$CLAUDE_PANE" ]] && cmux focus-pane "$CLAUDE_PANE" 2>/dev/null
+# Refocus caller pane
+[[ -n "$CALLER_PANE" ]] && cmux focus-pane "$CALLER_PANE" 2>/dev/null
 
 exit 0

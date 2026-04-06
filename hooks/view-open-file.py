@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""Claude Code PostToolUse hook: render all edited/written files in a single cmux browser tab.
+"""PostToolUse hook: render all edited/written files in a single cmux browser tab.
 
 On each Edit/Write:
 1. Appends the edit info (file, new_string) to a session changes log
 2. Renders a combined HTML page with file tree sidebar + collapsible diff sections
 3. Navigates the existing browser tab (or creates one) to the combined page
+
+Works with Claude Code, OpenCode, and any tool that pipes compatible JSON to stdin.
 """
 import json, sys, os, subprocess, fcntl, re, html
+
+# Import shared config (resolve through symlinks)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'lib'))
+from common import VIEW_CHANGES_DIR, VIEW_SURFACES_DIR
 
 # --- Shared helpers ---
 
@@ -41,7 +47,7 @@ if not file_path or not os.path.isfile(file_path):
     sys.exit(0)
 
 # --- Record this edit ---
-changes_dir = os.path.expanduser("~/.claude/view-changes")
+changes_dir = VIEW_CHANGES_DIR
 os.makedirs(changes_dir, exist_ok=True)
 changes_file = os.path.join(changes_dir, f"{session_id}.jsonl")
 
@@ -494,7 +500,7 @@ import time as _time
 url = f"file://{out_file}?t={int(_time.time() * 1000)}"
 
 # --- Navigate or create browser tab ---
-tracking_dir = os.path.expanduser("~/.claude/view-surfaces")
+tracking_dir = VIEW_SURFACES_DIR
 os.makedirs(tracking_dir, exist_ok=True)
 tracking_file = os.path.join(tracking_dir, f"{session_id}.txt")
 

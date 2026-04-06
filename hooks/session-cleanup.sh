@@ -1,7 +1,10 @@
 #!/bin/bash
-# Claude Code SessionEnd hook: clean up all session resources.
+# SessionEnd hook: clean up all session resources.
 # Handles Vim pane, broot marker, and browser view surfaces.
 # Only fires on actual exit, not on /resume.
+# Works with Claude Code, OpenCode, and any tool that pipes compatible JSON to stdin.
+
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
 
 INPUT=$(cat)
 eval "$(echo "$INPUT" | jq -r '@sh "SESSION_ID=\(.session_id // "") REASON=\(.reason // "")"')"
@@ -10,20 +13,20 @@ eval "$(echo "$INPUT" | jq -r '@sh "SESSION_ID=\(.session_id // "") REASON=\(.re
 [[ "$REASON" == "resume" ]] && exit 0
 
 # --- Vim: signal quit and remove marker ---
-SIGNAL_FILE="$HOME/.vim/claude-open-file-$SESSION_ID"
+SIGNAL_FILE="$(cmux_signal_file "$SESSION_ID")"
 echo "::quit::" > "$SIGNAL_FILE"
 
 if [[ -n "$CMUX_SURFACE_ID" ]]; then
-    rm -f "$HOME/.claude/vim-panes/${CMUX_SURFACE_ID}.ref"
+    rm -f "$VIM_PANES_DIR/${CMUX_SURFACE_ID}.ref"
 elif [[ -n "$CMUX_WORKSPACE_ID" ]]; then
-    rm -f "$HOME/.claude/vim-panes/${CMUX_WORKSPACE_ID}.ref"
+    rm -f "$VIM_PANES_DIR/${CMUX_WORKSPACE_ID}.ref"
 fi
 
 # --- Broot: remove marker ---
-rm -f "$HOME/.claude/broot-pane-id" 2>/dev/null
+rm -f "$BROOT_MARKER" 2>/dev/null
 
 # --- View surfaces: close all tracked browser tabs ---
-TRACKING_FILE="$HOME/.claude/view-surfaces/${SESSION_ID}.txt"
+TRACKING_FILE="$VIEW_SURFACES_DIR/${SESSION_ID}.txt"
 if [[ -f "$TRACKING_FILE" ]]; then
     TREE=$(cmux tree 2>/dev/null || true)
     while IFS= read -r surface_ref; do

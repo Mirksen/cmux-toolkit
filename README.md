@@ -1,14 +1,16 @@
 # cmux-toolkit
 
-Visual feedback and file tools for Claude Code in [cmux](https://cmux.dev) — browser tabs with diff highlighting, manual Vim editing, and on-demand broot file browser.
+Visual feedback and file tools for AI coding assistants in [cmux](https://cmux.dev) — browser tabs with diff highlighting, manual Vim editing, and on-demand broot file browser.
+
+**Supported tools:** Claude Code, OpenCode (Codex CLI planned once hook support expands)
 
 ## What you get
 
-When Claude edits files, a **browser tab** opens automatically showing a combined diff view with VS Code-style sidebar and git status badges:
+When your AI tool edits files, a **browser tab** opens automatically showing a combined diff view with VS Code-style sidebar and git status badges:
 
 ```
 ┌──────────────────────────────────────────────┐
-│  Claude Code                                 │
+│  AI coding tool (Claude Code / OpenCode)     │
 │  ┌────────────────────────────────────────┐  │
 │  │ PostToolUse (Edit|Write)               │  │
 │  │  → view-open-file.py → viewtab        │  │
@@ -27,29 +29,31 @@ When Claude edits files, a **browser tab** opens automatically showing a combine
 └──────────────────────────────────────────────┘
 ```
 
-- **viewtab** (automatic) — all files Claude edits/writes appear in a combined browser view with sidebar, diff highlighting (green additions, red deletions), and git status badges (U/A/M/D/R)
-- **edit / edittab** (manual) — open files in Vim via `! edit` or `! edittab` in Claude Code
+- **viewtab** (automatic) — all files edited/written appear in a combined browser view with sidebar, diff highlighting (green additions, red deletions), and git status badges (U/A/M/D/R)
+- **edit / edittab** (manual) — open files in Vim via `! edit` or `! edittab`
 - **view / viewtab** (manual) — render any file in the browser via `! view` or `! viewtab`
 - **broot sidebar** (on-demand) — toggle with `Option + Arrow Up`, select files to open
 
 ## Quick start
-
-See [SETUP.md](SETUP.md) for the copy-paste instruction you give to Claude Code.
-
-Or manually:
 
 ```bash
 git clone https://github.com/Mirksen/cmux-toolkit.git ~/cmux-toolkit
 bash ~/cmux-toolkit/setup.sh
 ```
 
-Then add the hooks to your `~/.claude/settings.json` and the keybind to your `.zshrc` (see SETUP.md for details).
+### Claude Code
+
+See [SETUP.md](SETUP.md) for the copy-paste instruction you give to Claude Code. After running `setup.sh`, add the hooks to your `~/.claude/settings.json` and the keybind to your `.zshrc`.
+
+### OpenCode
+
+The `setup.sh` script auto-detects OpenCode and symlinks the adapter plugin to `~/.config/opencode/plugins/cmux-toolkit`. The plugin is loaded automatically — no extra configuration needed.
 
 ## How it works
 
 ### viewtab (automatic, primary)
 
-When Claude Code runs Edit or Write, the `view-open-file.py` PostToolUse hook:
+When your AI tool runs Edit or Write, the `view-open-file.py` hook:
 1. Appends the edit info (file, old/new content) to a session changes log (JSONL)
 2. Renders a **combined HTML page** with a VS Code-style sidebar and collapsible diff sections for all changed files
 3. Navigates the existing browser tab (or creates one) to the combined page
@@ -70,11 +74,11 @@ The changes log resets when a new prompt starts (`view-prompt-reset.sh`).
 
 ### edit / edittab (manual)
 
-Open files in Vim from Claude Code using the `!` prefix:
+Open files in Vim using the `!` prefix:
 - `! edit file.py` — opens Vim in a new split pane below
 - `! edittab file.py` — opens Vim as a tab in the same pane
 
-If you use Vim with `claude-sync.vim`, broot's Enter key sends files to Vim via signal file IPC.
+If you use Vim with `cmux-sync.vim`, broot's Enter key sends files to Vim via signal file IPC.
 
 ### broot sidebar (on-demand)
 
@@ -98,9 +102,17 @@ Keybind      ─→ broot-pane.sh ──────→ toggle broot sidebar
   (Opt+↑)
 ```
 
+### Claude Code
+
+Hooks are configured in `~/.claude/settings.json` — see [SETUP.md](SETUP.md).
+
+### OpenCode
+
+The `plugins/opencode/cmux-toolkit.ts` adapter translates OpenCode's plugin events (`tool.execute.after`, `chat.message`, `shell.env`, `event`) into the same JSON-on-stdin format the hook scripts expect. The plugin also injects `CMUX_SESSION_ID` into the shell environment for broot/Vim integration.
+
 ### Optional: auto Vim subpane
 
-If you prefer the old behavior where Vim opens automatically on session start, add these SessionStart hooks to your settings.json:
+If you prefer Vim to open automatically on session start, add these SessionStart hooks to your Claude Code `settings.json`:
 
 ```json
 "SessionStart": [
@@ -134,7 +146,7 @@ cmux-toolkit/
 │   ├── viewtab → view          # Tab mode (via $0 detection)
 │   ├── edit                    # Open Vim in cmux pane
 │   └── edittab → edit          # Tab mode (via $0 detection)
-├── hooks/                      # Claude Code hooks (→ ~/.claude/hooks/)
+├── hooks/                      # Tool hooks (→ ~/.cmux-toolkit/hooks/ + ~/.claude/hooks/)
 │   ├── view-open-file.py       # PostToolUse → combined browser view with diffs
 │   ├── view-prompt-reset.sh    # UserPromptSubmit → reset changes log
 │   ├── session-cleanup.sh      # SessionEnd → close vim, broot, browser
@@ -147,6 +159,12 @@ cmux-toolkit/
 │   └── templates/              # HTML assets for view-open-file.py
 │       ├── view-changes.css    # Sidebar, diff, and dark mode styles
 │       └── view-changes.js     # Tree navigation and diff toggle logic
+├── lib/                        # Shared config libraries
+│   ├── common.sh               # Path constants for shell hooks
+│   └── common.py               # Path constants for Python hooks
+├── plugins/
+│   └── opencode/
+│       └── cmux-toolkit.ts     # OpenCode adapter plugin
 ├── config/
 │   ├── cmux/
 │   │   └── config.ghostty      # Dark theme + inactive pane dimming
@@ -155,7 +173,7 @@ cmux-toolkit/
 │   │   ├── verbs.hjson         # Enter key → open-file verb
 │   │   └── skins/
 │   └── vim/
-│       └── claude-sync.vim     # Vim signal file polling
+│       └── cmux-sync.vim       # Vim signal file polling
 ├── setup.sh                    # Idempotent setup script
 ├── SETUP.md                    # Copy-paste instructions for Claude Code
 └── README.md
@@ -179,7 +197,9 @@ The theme uses MesloLGS Nerd Font — install via `brew install font-meslo-lg-ne
 
 - macOS with [Homebrew](https://brew.sh)
 - [cmux](https://cmux.dev) terminal multiplexer
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+- At least one AI coding tool:
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+  - [OpenCode](https://opencode.ai)
 - [Node.js](https://nodejs.org) + `marked` package (for Markdown rendering)
 - `broot` and `jq` (installed automatically by setup.sh)
 

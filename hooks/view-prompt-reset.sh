@@ -1,16 +1,19 @@
 #!/bin/bash
-# Claude Code UserPromptSubmit hook: reset changes view for new prompt cycle.
+# UserPromptSubmit hook: reset changes view for new prompt cycle.
 # Clears the changes log and navigates the browser tab to an empty state.
+# Works with Claude Code, OpenCode, and any tool that pipes compatible JSON to stdin.
+
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
 
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
 [[ -z "$SESSION_ID" ]] && exit 0
 
 # Clear the changes log
-rm -f "$HOME/.claude/view-changes/${SESSION_ID}.jsonl" 2>/dev/null
+rm -f "$VIEW_CHANGES_DIR/${SESSION_ID}.jsonl" 2>/dev/null
 
 # Navigate existing browser tab to a blank "waiting" page
-TRACKING_FILE="$HOME/.claude/view-surfaces/${SESSION_ID}.txt"
+TRACKING_FILE="$VIEW_SURFACES_DIR/${SESSION_ID}.txt"
 if [[ -f "$TRACKING_FILE" ]]; then
   SURFACE=$(tail -1 "$TRACKING_FILE" | tr -d '[:space:]')
   if [[ -n "$SURFACE" ]]; then
