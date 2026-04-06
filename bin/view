@@ -10,8 +10,7 @@
 
 set -euo pipefail
 
-# Detect mode from command name
-# "view" opens a split, "viewtab" reuses/creates a tab in the same pane
+# Detect mode: "view" = new split pane, "viewtab" = reuse existing tab
 CMD_NAME=$(basename "$0")
 MODE="split"
 [[ "$CMD_NAME" == "viewtab" ]] && MODE="tab"

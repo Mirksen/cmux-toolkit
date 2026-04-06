@@ -24,13 +24,16 @@ os.makedirs(changes_dir, exist_ok=True)
 changes_file = os.path.join(changes_dir, f"{session_id}.jsonl")
 
 new_string = ""
+old_string = ""
 if tool_name == "Edit":
     new_string = tool_input.get("new_string", "")
+    old_string = tool_input.get("old_string", "")
 
 entry = json.dumps({
     "file": file_path,
     "tool": tool_name,
     "new_string": new_string,
+    "old_string": old_string,
 })
 with open(changes_file, "a") as f:
     fcntl.flock(f, fcntl.LOCK_EX)
@@ -44,17 +47,18 @@ with open(changes_file, "r") as f:
         if line:
             changes.append(json.loads(line))
 
-# --- Group by file, keeping new_strings per file ---
+# --- Group by file, keeping edit pairs per file ---
 file_order = []
-file_edits = {}  # file -> list of new_strings
+file_edits = {}  # file -> list of (old_string, new_string) tuples
 for c in changes:
     fp = c["file"]
     if fp not in file_edits:
         file_order.append(fp)
         file_edits[fp] = []
     ns = c.get("new_string", "")
-    if ns:
-        file_edits[fp].append(ns)
+    os_ = c.get("old_string", "")
+    if ns or os_:
+        file_edits[fp].append((os_, ns))
 
 # --- Find project root (use cwd, which is where Claude Code runs) ---
 cwd = os.getcwd()
@@ -84,6 +88,33 @@ try:
                 all_files.add(os.path.join(git_root, f))
 except Exception:
     pass
+
+# --- Detect git status for each changed file ---
+file_status = {}  # file -> "N" (new/untracked), "M" (modified), "W" (written/overwrite)
+for fp in file_order:
+    rel = os.path.relpath(fp, git_root) if fp.startswith(git_root + "/") else None
+    if rel:
+        try:
+            result = subprocess.run(
+                ["git", "status", "--porcelain", "--", rel],
+                capture_output=True, text=True, timeout=5, cwd=git_root,
+            )
+            status_line = result.stdout.strip()
+            if status_line.startswith("??") or status_line.startswith("A"):
+                file_status[fp] = "N"
+            elif status_line:
+                file_status[fp] = "M"
+            else:
+                file_status[fp] = "M"  # changed in session but committed state matches
+        except Exception:
+            file_status[fp] = "M"
+    else:
+        file_status[fp] = "M"
+
+    # Override: Write tool with no edit pairs = new file or full overwrite
+    tools_used = [c["tool"] for c in changes if c["file"] == fp]
+    if tools_used == ["Write"] and not file_edits.get(fp):
+        file_status[fp] = "N" if file_status.get(fp) == "N" else "W"
 
 # Split changed files into in-project and external
 changed_set = set(file_order)
@@ -150,10 +181,17 @@ def render_tree(node, depth=0):
     for fname in files:
         fp = node[fname]["__file__"]
         is_changed = fp in changed_set
-        cls = ' class="tree-changed"' if is_changed else ""
+        status = file_status.get(fp, "")
+        if is_changed:
+            status_cls = "tree-new" if status == "N" else "tree-changed"
+            cls = f' class="{status_cls}"'
+            badge = f'<span class="tree-badge tree-badge-{status.lower()}">{status}</span>' if status else ""
+        else:
+            cls = ""
+            badge = ""
         idx = file_order.index(fp) if is_changed else -1
         click = f' onclick="openFile({idx})"' if is_changed else ""
-        lines.append(f'<li{cls}{click}>{"  " * depth}{fname}</li>')
+        lines.append(f'<li{cls}{click}>{"  " * depth}{fname}{badge}</li>')
 
     return lines
 
@@ -166,6 +204,8 @@ CSS = """
   --surface: #f5f5f7; --border: #d2d2d7;
   --link: #0066cc;
   --diff-bg: #d4edda; --diff-border: #28a745; --diff-fg: #155724;
+  --del-bg: #f8d7da; --del-border: #dc3545; --del-fg: #721c24;
+  --mod-fg: #856404; --mod-bg: #fff3cd;
   --hover: #fafafa;
 }
 @media (prefers-color-scheme: dark) {
@@ -174,6 +214,8 @@ CSS = """
     --surface: #252526; --border: #3c3c3c;
     --link: #4da3ff;
     --diff-bg: #1e3a2a; --diff-border: #2ea043; --diff-fg: #56d364;
+    --del-bg: #3d1f28; --del-border: #f85149; --del-fg: #f85149;
+    --mod-fg: #e3b341; --mod-bg: #3b2e00;
     --hover: #2a2d2e;
   }
 }
@@ -186,8 +228,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Ar
 .sidebar-header { padding: 0.5rem 0.75rem; font-weight: 600; font-size: 0.9em; color: var(--fg); border-bottom: 1px solid var(--border); margin-bottom: 0.25rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 .tree-root, .tree-root ul { list-style: none; padding-left: 0; }
 .tree-root li { padding: 0.15rem 0.75rem; cursor: default; white-space: nowrap; color: var(--fg-muted); }
-.tree-root li.tree-changed { color: var(--diff-fg); font-weight: 600; cursor: pointer; }
-.tree-root li.tree-changed:hover { background: var(--diff-bg); }
+.tree-root li.tree-changed { color: var(--mod-fg); font-weight: 600; cursor: pointer; }
+.tree-root li.tree-changed:hover { background: var(--mod-bg); }
+.tree-root li.tree-new { color: var(--diff-fg); font-weight: 600; cursor: pointer; }
+.tree-root li.tree-new:hover { background: var(--diff-bg); }
+.tree-badge { font-size: 0.7em; padding: 0.05rem 0.3rem; border-radius: 3px; margin-left: 0.4rem; font-weight: 700; }
+.tree-badge-n { background: var(--diff-bg); color: var(--diff-fg); }
+.tree-badge-m { background: var(--mod-bg); color: var(--mod-fg); }
+.tree-badge-w { background: var(--del-bg); color: var(--del-fg); }
 .tree-dir > .tree-toggle { cursor: pointer; color: var(--fg); }
 .tree-dir > .tree-toggle::before { content: "\\25B6 "; font-size: 0.65em; display: inline-block; transition: transform 0.15s; }
 .tree-dir.open > .tree-toggle::before { transform: rotate(90deg); }
@@ -203,7 +251,10 @@ summary { font-size: 0.85em; color: var(--fg); padding: 0.5rem 0.75rem; font-fam
 summary::-webkit-details-marker { display: none; }
 summary::before { content: "\\25B6"; font-size: 0.7em; margin-right: 0.5rem; transition: transform 0.15s; }
 details[open] > summary::before { transform: rotate(90deg); }
-summary .count { background: var(--diff-bg); color: var(--diff-fg); padding: 0.1rem 0.4rem; border-radius: 3px; margin-left: auto; font-size: 0.85em; }
+summary .count { padding: 0.1rem 0.4rem; border-radius: 3px; margin-left: auto; font-size: 0.85em; }
+summary .count-n { background: var(--diff-bg); color: var(--diff-fg); }
+summary .count-m { background: var(--mod-bg); color: var(--mod-fg); }
+summary .count-w { background: var(--del-bg); color: var(--del-fg); }
 summary .filepath { color: var(--fg-muted); margin-left: 0.25rem; }
 .file-content { padding: 0.75rem; line-height: 1.6; }
 table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.95em; }
@@ -220,7 +271,9 @@ blockquote { border-left: 3px solid var(--border); margin: 1rem 0; padding: 0.5r
 hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
 li { margin: 0.25rem 0; }
 .diff-new { background: var(--diff-bg); border-left: 3px solid var(--diff-border); padding-left: 0.5rem; margin-left: -0.5rem; padding-right: 0.5rem; }
+.diff-del { background: var(--del-bg); border-left: 3px solid var(--del-border); padding-left: 0.5rem; margin-left: -0.5rem; padding-right: 0.5rem; text-decoration: line-through; color: var(--del-fg); }
 pre .diff-line { display: block; background: var(--diff-bg); border-left: 3px solid var(--diff-border); margin: 0 -1rem; padding: 0 1rem; }
+pre .diff-del-line { display: block; background: var(--del-bg); border-left: 3px solid var(--del-border); margin: 0 -1rem; padding: 0 1rem; text-decoration: line-through; color: var(--del-fg); }
 """
 
 JS = """
@@ -235,7 +288,7 @@ document.querySelectorAll('.tree-dir > .tree-toggle').forEach(el => {
   el.addEventListener('click', () => el.parentElement.classList.toggle('open'));
 });
 // Auto-expand directories containing changed files
-document.querySelectorAll('.tree-changed').forEach(el => {
+document.querySelectorAll('.tree-changed, .tree-new').forEach(el => {
   let parent = el.parentElement;
   while (parent) {
     if (parent.classList && parent.classList.contains('tree-dir')) {
@@ -281,10 +334,17 @@ for fp in file_order:
     else:
         rel_path += "/"
 
-    count_badge = f'<span class="count">{edit_count} edit{"s" if edit_count != 1 else ""}</span>' if edit_strings else ""
+    status = file_status.get(fp, "M")
+    status_labels = {"N": "new file", "M": "modified", "W": "overwritten"}
+    status_label = status_labels.get(status, "modified")
+    count_text = f'{edit_count} edit{"s" if edit_count != 1 else ""}' if edit_strings else status_label
+    count_cls = f"count count-{status.lower()}"
+    count_badge = f'<span class="{count_cls}">{count_text}</span>'
     parts.append(f'<details>')
     parts.append(f'<summary><strong>{basename}</strong><span class="filepath">{rel_path}</span>{count_badge}</summary>')
     parts.append('<div class="file-content">')
+
+    is_new_file = status == "N"
 
     if ext == "md":
         md_content = content
@@ -293,14 +353,20 @@ for fp in file_order:
             if end != -1:
                 md_content = md_content[end + 5:]
 
-        for ns in edit_strings:
-            ns_stripped = ns.rstrip("\n")
-            if ns_stripped and ns_stripped in md_content:
-                md_content = md_content.replace(
-                    ns_stripped,
-                    f'<div class="diff-new">\n\n{ns_stripped}\n\n</div>',
-                    1,
-                )
+        if is_new_file:
+            # New file: wrap entire content in green
+            md_content = f'<div class="diff-new">\n\n{md_content}\n\n</div>'
+        else:
+            for old_s, new_s in edit_strings:
+                new_stripped = new_s.rstrip("\n")
+                old_stripped = old_s.rstrip("\n")
+                if new_stripped and new_stripped in md_content:
+                    del_block = f'<div class="diff-del">\n\n{old_stripped}\n\n</div>\n' if old_stripped else ""
+                    md_content = md_content.replace(
+                        new_stripped,
+                        f'{del_block}<div class="diff-new">\n\n{new_stripped}\n\n</div>',
+                        1,
+                    )
 
         try:
             result = subprocess.run(
@@ -321,25 +387,40 @@ for fp in file_order:
         parts.append(rendered)
     else:
         lines = content.split("\n")
-        highlight_lines = set()
-        for ns in edit_strings:
-            ns_stripped = ns.rstrip("\n")
-            if not ns_stripped:
-                continue
-            new_lines = ns_stripped.split("\n")
-            file_lines = [l.rstrip("\n") for l in lines]
-            for i in range(len(file_lines) - len(new_lines) + 1):
-                if file_lines[i : i + len(new_lines)] == new_lines:
-                    highlight_lines.update(range(i, i + len(new_lines)))
-                    break
 
-        code_lines = []
-        for i, line in enumerate(lines):
-            escaped = html.escape(line)
-            if i in highlight_lines:
-                code_lines.append(f'<span class="diff-line">{escaped}</span>')
-            else:
-                code_lines.append(escaped)
+        if is_new_file:
+            # New file: all lines green
+            code_lines = [f'<span class="diff-line">{html.escape(l)}</span>' for l in lines]
+        else:
+            highlight_lines = set()  # green (new)
+            deleted_blocks = []  # (insert_before_line, [old_lines])
+            for old_s, new_s in edit_strings:
+                new_stripped = new_s.rstrip("\n")
+                old_stripped = old_s.rstrip("\n")
+                if new_stripped:
+                    new_lines = new_stripped.split("\n")
+                    file_lines = [l.rstrip("\n") for l in lines]
+                    for i in range(len(file_lines) - len(new_lines) + 1):
+                        if file_lines[i : i + len(new_lines)] == new_lines:
+                            highlight_lines.update(range(i, i + len(new_lines)))
+                            if old_stripped:
+                                deleted_blocks.append((i, old_stripped.split("\n")))
+                            break
+
+            del_before = {}
+            for insert_at, old_lines in deleted_blocks:
+                del_before[insert_at] = old_lines
+
+            code_lines = []
+            for i, line in enumerate(lines):
+                if i in del_before:
+                    for dl in del_before[i]:
+                        code_lines.append(f'<span class="diff-del-line">{html.escape(dl)}</span>')
+                escaped = html.escape(line)
+                if i in highlight_lines:
+                    code_lines.append(f'<span class="diff-line">{escaped}</span>')
+                else:
+                    code_lines.append(escaped)
 
         parts.append(f'<pre><code>{chr(10).join(code_lines)}</code></pre>')
 
