@@ -7,12 +7,12 @@ Paste this into Claude Code to set up the toolkit:
 ```
 Set up the cmux-toolkit (viewtab browser tabs, manual Vim, on-demand broot) for my cmux environment:
 
-1. Clone the repo:
-   git clone https://github.com/Mirksen/cmux-toolkit.git ~/cmux-toolkit
-   (If it already exists, run: git -C ~/cmux-toolkit pull)
+1. Clone the repo (any location is fine):
+   git clone https://github.com/Mirksen/cmux-toolkit.git
+   (If it already exists, run: git pull from inside the repo)
 
-2. Run the setup script:
-   bash ~/cmux-toolkit/setup.sh
+2. Run the setup script from inside the repo:
+   bash setup.sh
 
 3. Add the broot-toggle keybind to my .zshrc — append this block
    if it's not already present:
@@ -85,5 +85,5 @@ To also auto-open a Vim subpane on session start (old behavior), add these to th
 ## Updating
 
 ```bash
-git -C ~/cmux-toolkit pull && bash ~/cmux-toolkit/setup.sh
+git pull && bash setup.sh
 ```

@@ -1,0 +1,8 @@
+#!/usr/bin/env node
+// render-md — Render Markdown (stdin) to HTML (stdout) via marked
+// Usage: render-md < file.md
+const {marked} = require('marked');
+marked.setOptions({gfm: true});
+let md = '';
+process.stdin.on('data', d => md += d);
+process.stdin.on('end', () => process.stdout.write(marked.parse(md)));

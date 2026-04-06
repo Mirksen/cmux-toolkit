@@ -3,7 +3,7 @@
 # Clears the changes log and navigates the browser tab to an empty state.
 
 INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null)
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // ""')
 [[ -z "$SESSION_ID" ]] && exit 0
 
 # Clear the changes log

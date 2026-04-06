@@ -66,19 +66,21 @@ if grep -q '__HOME__' "$VERBS_COPY" 2>/dev/null; then
     info "Replaced __HOME__ placeholder in verbs.hjson with $HOME"
 fi
 
-# ── 4. Symlink hook scripts ──
+# ── 4. Symlink hook scripts (only .sh and .py, skip subdirectories) ──
 info "Linking hook scripts..."
-for hook in "$REPO_DIR"/hooks/*; do
+for hook in "$REPO_DIR"/hooks/*.sh "$REPO_DIR"/hooks/*.py; do
+    [[ -f "$hook" ]] || continue
     name=$(basename "$hook")
     backup_and_link "$hook" "$HOME/.claude/hooks/$name"
 done
+# Templates are resolved via os.path.realpath(__file__) in hooks, no symlink needed
 
 # ── 5. Symlink bin/ commands ──
 info "Linking bin/ commands..."
-for cmd in view edit; do
+for cmd in view edit render-md; do
     backup_and_link "$REPO_DIR/bin/$cmd" "$HOME/.local/bin/$cmd"
 done
-# Symlinks for tab-mode aliases
+# Symlinks for tab-mode aliases (these are symlinks in the repo: viewtab→view, edittab→edit)
 for cmd in viewtab edittab; do
     backup_and_link "$REPO_DIR/bin/$cmd" "$HOME/.local/bin/$cmd"
 done
@@ -137,7 +139,7 @@ echo ""
 info "Setup complete!"
 echo ""
 echo "  Hooks:    ~/.claude/hooks/ ($(ls ~/.claude/hooks/*.sh ~/.claude/hooks/*.py 2>/dev/null | wc -l | tr -d ' ') files)"
-echo "  Commands: ~/.local/bin/{view,viewtab,edit,edittab}"
+echo "  Commands: ~/.local/bin/{view,viewtab,edit,edittab,render-md}"
 echo "  Theme:    ~/Library/Application Support/com.cmuxterm.app/config.ghostty"
 echo "  Broot:    ~/.config/broot/ (conf.hjson, verbs.hjson, skin)"
 echo "  Vim:      ~/.vim/claude-sync.vim (for manual edit/edittab)"

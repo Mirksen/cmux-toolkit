@@ -83,12 +83,8 @@ else:
       echo "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
       echo "<style>${CSS}</style>"
       echo "<title>${BASENAME}</title></head><body>"
-      echo "$CONTENT" | NODE_PATH="$(npm root -g 2>/dev/null)" node -e "
-        const {marked} = require('marked');
-        marked.setOptions({gfm: true});
-        let md=''; process.stdin.on('data',d=>md+=d);
-        process.stdin.on('end',()=>process.stdout.write(marked.parse(md)));
-      " 2>/dev/null || echo "$CONTENT"
+      SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+      echo "$CONTENT" | NODE_PATH="$(npm root -g 2>/dev/null)" "$SCRIPT_DIR/render-md" 2>/dev/null || echo "$CONTENT"
       echo "$SCROLL_SCRIPT"
       echo "</body></html>"
     } > "$OUT"

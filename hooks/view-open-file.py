@@ -7,7 +7,29 @@ On each Edit/Write:
 3. Navigates the existing browser tab (or creates one) to the combined page
 """
 import json, sys, os, subprocess, fcntl, re, html
-from collections import defaultdict
+
+# --- Shared helpers ---
+
+LANG_MAP = {
+    "py": "python", "sh": "bash", "bash": "bash", "zsh": "bash",
+    "js": "javascript", "ts": "typescript", "json": "json",
+    "yaml": "yaml", "yml": "yaml", "toml": "toml",
+    "html": "markup", "css": "css", "go": "go", "rs": "rust",
+    "rb": "ruby", "java": "java", "c": "c", "cpp": "cpp",
+    "sql": "sql", "hjson": "json", "md": "markdown",
+}
+
+def detect_language(ext, first_line=""):
+    """Return Prism language name from file extension or shebang."""
+    lang = LANG_MAP.get(ext, "")
+    if not lang and first_line.startswith("#!"):
+        shebang = first_line.lower()
+        if "python" in shebang: lang = "python"
+        elif "bash" in shebang or "/sh" in shebang: lang = "bash"
+        elif "node" in shebang: lang = "javascript"
+        elif "ruby" in shebang: lang = "ruby"
+    return lang
+
 
 data = json.load(sys.stdin)
 session_id = data.get("session_id", "default")
@@ -60,6 +82,8 @@ for c in changes:
     if ns or os_:
         file_edits[fp].append((os_, ns))
 
+file_index = {fp: i for i, fp in enumerate(file_order)}  # O(1) lookups
+
 # --- Find project root (use cwd, which is where Claude Code runs) ---
 cwd = os.getcwd()
 try:
@@ -89,32 +113,61 @@ try:
 except Exception:
     pass
 
-# --- Detect git status for each changed file ---
-file_status = {}  # file -> "N" (new/untracked), "M" (modified), "W" (written/overwrite)
+# --- Detect git status for each changed file (single subprocess call) ---
+# Status codes follow VS Code convention: U=untracked, A=added, M=modified, D=deleted, R=renamed
+file_status = {}
+file_rename_from = {}  # file -> original path (for renamed files)
+git_statuses = {}  # rel_path -> porcelain status code
+try:
+    result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        capture_output=True, text=True, timeout=5, cwd=git_root,
+    )
+    if result.returncode == 0:
+        for line in result.stdout.splitlines():
+            if len(line) >= 4:
+                code = line[:2]
+                path = line[3:]
+                # Renames: "R  old -> new" or "RM old -> new"
+                if code.startswith("R") and " -> " in path:
+                    old_path, new_path = path.split(" -> ", 1)
+                    git_statuses[new_path] = code
+                    git_statuses[old_path] = code
+                    # Track the rename mapping (new -> old)
+                    new_abs = os.path.join(git_root, new_path)
+                    file_rename_from[new_abs] = old_path
+                else:
+                    git_statuses[path] = code
+except Exception:
+    pass
+
 for fp in file_order:
     rel = os.path.relpath(fp, git_root) if fp.startswith(git_root + "/") else None
     if rel:
-        try:
-            result = subprocess.run(
-                ["git", "status", "--porcelain", "--", rel],
-                capture_output=True, text=True, timeout=5, cwd=git_root,
-            )
-            status_line = result.stdout.strip()
-            if status_line.startswith("??") or status_line.startswith("A"):
-                file_status[fp] = "N"
-            elif status_line:
-                file_status[fp] = "M"
-            else:
-                file_status[fp] = "M"  # changed in session but committed state matches
-        except Exception:
+        code = git_statuses.get(rel, "")
+        if code.startswith("??"):
+            file_status[fp] = "U"
+        elif code.startswith("A") or code.startswith(" A"):
+            file_status[fp] = "A"
+        elif code.startswith("R"):
+            file_status[fp] = "R"
+        elif code.startswith("D") or code.startswith(" D"):
+            file_status[fp] = "D"
+        else:
             file_status[fp] = "M"
     else:
         file_status[fp] = "M"
 
-    # Override: Write tool with no edit pairs = new file or full overwrite
+    # Write tool to an untracked file = untracked; to a tracked file = modified
     tools_used = [c["tool"] for c in changes if c["file"] == fp]
     if tools_used == ["Write"] and not file_edits.get(fp):
-        file_status[fp] = "N" if file_status.get(fp) == "N" else "W"
+        if file_status.get(fp) in ("U", "A"):
+            file_status[fp] = "U"
+
+# Detect deleted files: in changes log but no longer on disk
+for fp in file_order:
+    if not os.path.isfile(fp):
+        file_status[fp] = "D"
 
 # Split changed files into in-project and external
 changed_set = set(file_order)
@@ -208,15 +261,15 @@ def render_tree(node, depth=0):
         status = file_status.get(fp, "")
         icon = get_icon(fname)
         if is_changed:
-            status_cls = "tree-new" if status == "N" else "tree-changed"
+            STATUS_TREE_CLS = {"U": "tree-untracked", "A": "tree-added", "M": "tree-modified", "D": "tree-deleted", "R": "tree-renamed"}
+            status_cls = STATUS_TREE_CLS.get(status, "tree-modified")
             cls = f' class="{status_cls}"'
             badge = f'<span class="tree-badge tree-badge-{status.lower()}">{status}</span>'
-            idx = file_order.index(fp)
+            idx = file_index[fp]
             click = f' onclick="event.stopPropagation();openFile({idx})"'
         else:
             cls = ""
             badge = ""
-            # Non-edited files: assign an index offset after edited files
             all_tree_files.append(fp)
             viewer_idx = len(file_order) + len(all_tree_files) - 1
             click = f' onclick="event.stopPropagation();openViewer({viewer_idx})"'
@@ -226,15 +279,16 @@ def render_tree(node, depth=0):
 
 tree_html = "\n".join(["<ul class='tree-root'>"] + render_tree(tree) + ["</ul>"])
 
-# --- Changes section (grouped by status) ---
+# --- Changes section (grouped by status, VS Code order) ---
 changes_section_items = []
-# New files first, then modified
-new_files = [(fp, i) for i, fp in enumerate(file_order) if file_status.get(fp) == "N"]
-mod_files = [(fp, i) for i, fp in enumerate(file_order) if file_status.get(fp) != "N"]
+STATUS_BADGE_CLS = {"U": "tree-badge-u", "A": "tree-badge-a", "M": "tree-badge-m", "D": "tree-badge-d", "R": "tree-badge-r"}
+# Group order: Added/Untracked, Modified, Renamed, Deleted
+added_files = [(fp, i) for i, fp in enumerate(file_order) if file_status.get(fp) in ("U", "A")]
+mod_files = [(fp, i) for i, fp in enumerate(file_order) if file_status.get(fp) == "M"]
+ren_files = [(fp, i) for i, fp in enumerate(file_order) if file_status.get(fp) == "R"]
+del_files = [(fp, i) for i, fp in enumerate(file_order) if file_status.get(fp) == "D"]
 
-for label, file_list, badge_cls in [("New", new_files, "tree-badge-n"), ("Modified", mod_files, "tree-badge-m")]:
-    if not file_list:
-        continue
+for file_list in [added_files, mod_files, ren_files, del_files]:
     for fp, idx in file_list:
         basename = os.path.basename(fp)
         icon = get_icon(basename)
@@ -248,203 +302,28 @@ for label, file_list, badge_cls in [("New", new_files, "tree-badge-n"), ("Modifi
         dirname = os.path.dirname(rel)
         dir_hint = f'<span class="changes-dir">{dirname}/</span>' if dirname and dirname != "." else ""
         status = file_status.get(fp, "M")
+        badge_cls = STATUS_BADGE_CLS.get(status, "tree-badge-m")
+        # Show original path for renamed files
+        rename_hint = ""
+        if status == "R" and fp in file_rename_from:
+            rename_hint = f'<span class="changes-dir"> &larr; {html.escape(file_rename_from[fp])}</span>'
         changes_section_items.append(
             f'<li class="changes-item" onclick="openFile({idx})">'
-            f'<span class="tree-icon">{icon}</span>{html.escape(basename)}{dir_hint}'
+            f'<span class="tree-icon">{icon}</span>{html.escape(basename)}{dir_hint}{rename_hint}'
             f'<span class="tree-badge {badge_cls}">{status}</span></li>'
         )
 
 changes_html = "\n".join(changes_section_items)
 
 # --- Build combined HTML ---
-CSS = """
-:root {
-  --bg: #fff; --fg: #1d1d1f; --fg-muted: #6e6e73;
-  --surface: #f5f5f7; --border: #d2d2d7;
-  --link: #0066cc;
-  --diff-bg: #d4edda; --diff-border: #28a745; --diff-fg: #155724;
-  --del-bg: #f8d7da; --del-border: #dc3545; --del-fg: #721c24;
-  --mod-fg: #856404; --mod-bg: #fff3cd;
-  --hover: #fafafa;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1e1e1e; --fg: #d4d4d4; --fg-muted: #858585;
-    --surface: #252526; --border: #3c3c3c;
-    --link: #4da3ff;
-    --diff-bg: #1e3a2a; --diff-border: #2ea043; --diff-fg: #56d364;
-    --del-bg: #3d1f28; --del-border: #f85149; --del-fg: #f85149;
-    --mod-fg: #e3b341; --mod-bg: #3b2e00;
-    --hover: #2a2d2e;
-  }
-}
-
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: var(--fg); background: var(--bg); display: flex; height: 100vh; overflow: hidden; }
-
-/* --- Sidebar --- */
-.sidebar { width: 260px; min-width: 200px; background: var(--surface); border-right: 1px solid var(--border); overflow-y: auto; font-size: 13px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; flex-shrink: 0; }
-.sidebar-header { padding: 6px 10px; font-weight: 600; font-size: 11px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
-.sidebar-path { font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--fg-muted); opacity: 0.7; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-/* Section headers */
-.section-header { padding: 4px 4px 4px 10px; font-weight: 600; font-size: 11px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.5px; border-top: 1px solid var(--border); cursor: pointer; user-select: none; display: flex; align-items: center; line-height: 1.4; }
-.section-header .section-arrow { display: inline-block; font-size: 8px; margin-right: 4px; transition: transform 0.15s; }
-.section-header.collapsed .section-arrow { transform: rotate(-90deg); }
-.section-content { }
-.section-header.collapsed + .section-content { display: none; }
-.section-count { margin-left: auto; font-weight: 400; opacity: 0.7; }
-
-/* Changes list */
-.changes-list { list-style: none; padding: 0; margin: 0; }
-.changes-item { padding: 2px 6px 2px 10px; margin: 0; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; color: var(--fg); line-height: 1.6; }
-.changes-item:hover { background: var(--hover); }
-.changes-dir { color: var(--fg-muted); margin-left: 4px; font-size: 0.85em; }
-
-/* Tree */
-.tree-root, .tree-root ul { list-style: none; padding-left: 0; margin: 0; }
-.tree-root li { padding: 1px 0; margin: 0; cursor: default; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg-muted); display: flex; align-items: center; line-height: 1.6; }
-.tree-root li:not(.tree-dir) { cursor: pointer; }
-.tree-root li:not(.tree-dir):hover { background: var(--hover); }
-.tree-root li.tree-active { background: var(--border); }
-.tree-root li.tree-changed { color: var(--mod-fg); cursor: pointer; }
-.tree-root li.tree-new { color: var(--diff-fg); cursor: pointer; }
-.tree-icon { margin-right: 3px; flex-shrink: 0; }
-.tree-badge { font-size: 10px; padding: 0 4px; border-radius: 3px; margin-left: auto; font-weight: 600; flex-shrink: 0; margin-right: 6px; }
-.tree-badge-n { background: var(--diff-bg); color: var(--diff-fg); }
-.tree-badge-m { background: var(--mod-bg); color: var(--mod-fg); }
-.tree-badge-w { background: var(--del-bg); color: var(--del-fg); }
-.tree-root li.tree-dir { flex-direction: column; align-items: stretch; }
-.tree-dir > .tree-toggle { cursor: pointer; color: var(--fg); display: flex; align-items: center; padding: 1px 0; }
-.tree-dir > .tree-toggle:hover { background: var(--hover); }
-.tree-arrow { display: inline-block; width: 0; height: 0; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 5px solid var(--fg-muted); margin-right: 3px; transition: transform 0.1s; flex-shrink: 0; }
-.tree-dir.open > .tree-toggle .tree-arrow { transform: rotate(90deg); }
-.tree-children { display: none; }
-.tree-dir.open > .tree-children { display: block; }
-
-/* --- Main content --- */
-.main { flex: 1; overflow-y: auto; padding: 1.5rem 2rem; }
-.main h1 { border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; font-size: 1.2em; margin-bottom: 1rem; }
-details { margin-bottom: 0.5rem; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-details[open] { margin-bottom: 1rem; }
-summary { font-size: 0.85em; color: var(--fg); padding: 0.5rem 0.75rem; font-family: monospace; cursor: pointer; background: var(--surface); user-select: none; list-style: none; display: flex; align-items: center; }
-summary::-webkit-details-marker { display: none; }
-summary::before { content: "\\25B6"; font-size: 0.7em; margin-right: 0.5rem; transition: transform 0.15s; }
-details[open] > summary::before { transform: rotate(90deg); }
-summary .count { padding: 0.1rem 0.4rem; border-radius: 3px; margin-left: auto; font-size: 0.85em; }
-summary .diff-toggle + .count { margin-left: 0; }
-summary .count-n { background: var(--diff-bg); color: var(--diff-fg); }
-summary .count-m { background: var(--mod-bg); color: var(--mod-fg); }
-summary .count-w { background: var(--del-bg); color: var(--del-fg); }
-summary .filepath { color: var(--fg-muted); margin-left: 0.25rem; }
-.file-content { padding: 0.75rem; line-height: 1.6; }
-table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.95em; }
-th, td { border: 1px solid var(--border); padding: 0.5rem 0.75rem; text-align: left; }
-th { background: var(--surface); font-weight: 600; }
-tr:hover { background: var(--hover); }
-code { background: var(--surface); padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.9em; }
-pre { background: var(--surface); padding: 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.85em; margin: 0; }
-pre code { background: none; padding: 0; counter-reset: line; }
-pre:not(.line-numbers) code .line { counter-increment: line; }
-pre:not(.line-numbers) code .line::before { content: counter(line); display: inline-block; width: 3em; margin-right: 1em; text-align: right; color: var(--fg-muted); opacity: 0.5; user-select: none; }
-pre.line-numbers { background: var(--surface) !important; }
-pre.line-numbers code { color: var(--fg); }
-h2 { margin-top: 2rem; }
-a { color: var(--link); text-decoration: none; }
-a:hover { text-decoration: underline; }
-blockquote { border-left: 3px solid var(--border); margin: 1rem 0; padding: 0.5rem 1rem; color: var(--fg-muted); }
-hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
-li { margin: 0.25rem 0; }
-.viewer-section { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-bottom: 1rem; }
-.viewer-header { font-size: 0.85em; padding: 0.5rem 0.75rem; font-family: monospace; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; }
-.viewer-close { margin-left: auto; cursor: pointer; color: var(--fg-muted); font-size: 1.1em; padding: 0 4px; border-radius: 3px; }
-.viewer-close:hover { background: var(--hover); color: var(--fg); }
-.viewer-header .filepath { color: var(--fg-muted); margin-left: 0.25rem; }
-.diff-new { background: var(--diff-bg); border-left: 3px solid var(--diff-border); padding-left: 0.5rem; margin-left: -0.5rem; padding-right: 0.5rem; }
-.diff-del { background: var(--del-bg); border-left: 3px solid var(--del-border); padding-left: 0.5rem; margin-left: -0.5rem; padding-right: 0.5rem; text-decoration: line-through; color: var(--del-fg); }
-pre code .line { display: block; }
-pre code .line:hover { background: var(--hover); }
-pre .diff-line { background: var(--diff-bg); border-left: 3px solid var(--diff-border); margin: 0 -1rem; padding: 0 1rem; }
-pre .diff-line:hover { background: var(--diff-bg); filter: brightness(0.95); }
-pre .diff-del-line { background: var(--del-bg); border-left: 3px solid var(--del-border); margin: 0 -1rem; padding: 0 1rem; text-decoration: line-through; color: var(--del-fg); }
-pre .diff-del-line:hover { filter: brightness(0.95); }
-.line-skip { display: block; text-align: center; color: var(--fg-muted); font-size: 0.85em; padding: 2px 0; opacity: 0.6; cursor: pointer; user-select: none; }
-.line-skip:hover { opacity: 1; background: var(--hover); }
-.diff-toggle { font-size: 11px; padding: 2px 8px; border-radius: 3px; border: 1px solid var(--border); background: var(--surface); color: var(--fg-muted); cursor: pointer; margin-left: auto; margin-right: 8px; }
-.diff-toggle:hover { background: var(--hover); color: var(--fg); }
-"""
-
-JS = """
-function openFile(idx) {
-  const details = document.querySelectorAll('.main details:not(.viewer-section)');
-  if (details[idx]) {
-    details[idx].open = true;
-    details[idx].scrollIntoView({block: 'start', behavior: 'smooth'});
-  }
-  // Highlight in nav
-  clearActiveNav();
-  const items = document.querySelectorAll('[onclick*="openFile(' + idx + ')"]');
-  items.forEach(el => el.classList.add('tree-active'));
-}
-// Tree directory toggles
-document.querySelectorAll('.tree-dir > .tree-toggle').forEach(el => {
-  el.addEventListener('click', () => el.parentElement.classList.toggle('open'));
-});
-// Sync nav highlight when collapsible is toggled directly
-document.querySelectorAll('.main details:not(.viewer-section)').forEach((det, idx) => {
-  det.addEventListener('toggle', () => {
-    const navItems = document.querySelectorAll('[onclick*="openFile(' + idx + ')"]');
-    if (det.open) {
-      clearActiveNav();
-      navItems.forEach(el => el.classList.add('tree-active'));
-    } else {
-      navItems.forEach(el => el.classList.remove('tree-active'));
-    }
-  });
-});
-// Auto-expand directories containing changed files
-document.querySelectorAll('.tree-changed, .tree-new').forEach(el => {
-  let parent = el.parentElement;
-  while (parent) {
-    if (parent.classList && parent.classList.contains('tree-dir')) {
-      parent.classList.add('open');
-    }
-    parent = parent.parentElement;
-  }
-});
-function toggleFullFile(idx) {
-  const collapsed = document.getElementById('diff-collapsed-' + idx);
-  const full = document.getElementById('diff-full-' + idx);
-  if (!collapsed || !full) return;
-  const btn = document.querySelector('[onclick*="toggleFullFile(' + idx + ')"]');
-  if (full.style.display === 'none') {
-    collapsed.style.display = 'none';
-    full.style.display = '';
-    if (btn) btn.textContent = 'Show changes only';
-  } else {
-    collapsed.style.display = '';
-    full.style.display = 'none';
-    if (btn) btn.textContent = 'Show full file';
-  }
-}
-function clearActiveNav() {
-  document.querySelectorAll('.tree-active').forEach(el => el.classList.remove('tree-active'));
-}
-function openViewer(idx) {
-  const viewer = document.getElementById('viewer-' + idx);
-  if (!viewer) return;
-  const wasVisible = viewer.style.display !== 'none';
-  document.querySelectorAll('.viewer-section').forEach(el => el.style.display = 'none');
-  clearActiveNav();
-  if (!wasVisible) {
-    viewer.style.display = '';
-    viewer.scrollIntoView({block: 'start', behavior: 'smooth'});
-    // Highlight the clicked nav item
-    const item = document.querySelector('[onclick*="openViewer(' + idx + ')"]');
-    if (item) item.classList.add('tree-active');
-  }
-}
-"""
+# --- Load CSS/JS from template files ---
+_template_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "templates")
+with open(os.path.join(_template_dir, "view-changes.css")) as f:
+    CSS = f.read()
+with open(os.path.join(_template_dir, "view-changes.js")) as f:
+    JS = f.read()
+with open(os.path.join(_template_dir, "view-changes-prism.js")) as f:
+    PRISM_JS = f.read()
 
 parts = []
 parts.append('<!DOCTYPE html><html><head><meta charset="utf-8">')
@@ -484,11 +363,12 @@ for fp in file_order:
     edit_strings = file_edits[fp]
     edit_count = len(edit_strings)
 
-    if not os.path.isfile(fp):
-        continue
-
-    with open(fp, "r") as f:
-        content = f.read()
+    is_deleted = not os.path.isfile(fp)
+    if is_deleted:
+        content = ""
+    else:
+        with open(fp, "r") as f:
+            content = f.read()
 
     rel_path = os.path.relpath(os.path.dirname(fp), git_root)
     if rel_path == ".":
@@ -497,121 +377,80 @@ for fp in file_order:
         rel_path += "/"
 
     status = file_status.get(fp, "M")
-    status_labels = {"N": "new file", "M": "modified", "W": "overwritten"}
+    status_labels = {"U": "untracked", "A": "added", "M": "modified", "D": "deleted", "R": "renamed"}
     status_label = status_labels.get(status, "modified")
     count_text = f'{edit_count} edit{"s" if edit_count != 1 else ""}' if edit_strings else status_label
     count_cls = f"count count-{status.lower()}"
     count_badge = f'<span class="{count_cls}">{count_text}</span>'
-    file_idx = file_order.index(fp)
-    toggle_btn = f'<button class="diff-toggle" onclick="event.stopPropagation();toggleFullFile({file_idx})">Show full file</button>' if edit_strings and status != "N" else ""
+    file_idx = file_index[fp]
+    is_new_or_untracked = status in ("U", "A")
+    toggle_btn = f'<button class="diff-toggle" onclick="event.stopPropagation();toggleFullFile({file_idx})">Show full file</button>' if edit_strings and not is_new_or_untracked else ""
+    rename_info = ""
+    if status == "R" and fp in file_rename_from:
+        rename_info = f'<span class="filepath"> &larr; {html.escape(file_rename_from[fp])}</span>'
     parts.append(f'<details open>')
-    parts.append(f'<summary><strong>{basename}</strong><span class="filepath">{rel_path}</span>{toggle_btn}{count_badge}</summary>')
+    parts.append(f'<summary><strong>{basename}</strong><span class="filepath">{rel_path}</span>{rename_info}{toggle_btn}{count_badge}</summary>')
     parts.append('<div class="file-content">')
 
-    is_new_file = status == "N"
+    is_new_file = status in ("U", "A")
 
-    if ext == "md":
-        md_content = content
-        if md_content.startswith("---\n"):
-            end = md_content.find("\n---\n", 4)
-            if end != -1:
-                md_content = md_content[end + 5:]
-
-        if is_new_file:
-            # New file: wrap entire content in green
-            md_content = f'<div class="diff-new">\n\n{md_content}\n\n</div>'
+    if is_deleted:
+        # Show deleted file with strikethrough old content if available
+        del_content = "\n".join(old_s for old_s, _ in edit_strings if old_s)
+        if del_content:
+            parts.append(f'<pre><code><span class="diff-del">{html.escape(del_content)}</span></code></pre>')
         else:
-            for old_s, new_s in edit_strings:
-                new_stripped = new_s.rstrip("\n")
-                old_stripped = old_s.rstrip("\n")
-                if new_stripped and new_stripped in md_content:
-                    del_block = f'<div class="diff-del">\n\n{old_stripped}\n\n</div>\n' if old_stripped else ""
-                    md_content = md_content.replace(
-                        new_stripped,
-                        f'{del_block}<div class="diff-new">\n\n{new_stripped}\n\n</div>',
-                        1,
-                    )
+            parts.append('<p style="color:var(--del-fg);font-style:italic">File deleted</p>')
+        parts.append("</div></details>")
+        continue
 
-        try:
-            result = subprocess.run(
-                ["node", "-e",
-                 "const {marked}=require('marked');"
-                 "marked.setOptions({gfm:true});"
-                 "let md='';process.stdin.on('data',d=>md+=d);"
-                 "process.stdin.on('end',()=>process.stdout.write(marked.parse(md)));"],
-                input=md_content, capture_output=True, text=True, timeout=10,
-                env={**os.environ, "NODE_PATH": subprocess.run(
-                    ["npm", "root", "-g"], capture_output=True, text=True
-                ).stdout.strip()},
-            )
-            rendered = result.stdout if result.returncode == 0 else html.escape(md_content)
-        except Exception:
-            rendered = html.escape(md_content)
+    lines = content.split("\n")
+    file_idx = file_index[fp]
+    # Determine language for Prism syntax highlighting
+    diff_lang = detect_language(ext, lines[0] if lines else "")
+    diff_lang_cls = f' class="language-{diff_lang}"' if diff_lang else ""
 
-        parts.append(rendered)
+    if is_new_file:
+        # Raw code with language class; JS will wrap lines with diff-line after Prism highlights
+        parts.append(f'<pre><code{diff_lang_cls} data-diff-type="new-file">{html.escape(content)}</code></pre>')
     else:
-        lines = content.split("\n")
-        file_idx = file_order.index(fp)
-        # Determine language for Prism syntax highlighting
-        diff_lang_map = {"py": "python", "sh": "bash", "bash": "bash", "zsh": "bash",
-                         "js": "javascript", "ts": "typescript", "json": "json",
-                         "yaml": "yaml", "yml": "yaml", "toml": "toml",
-                         "html": "markup", "css": "css", "go": "go", "rs": "rust",
-                         "rb": "ruby", "java": "java", "c": "c", "cpp": "cpp",
-                         "sql": "sql", "hjson": "json"}
-        diff_lang = diff_lang_map.get(ext, "")
-        if not diff_lang:
-            first_line = lines[0] if lines else ""
-            if first_line.startswith("#!"):
-                shebang = first_line.lower()
-                if "python" in shebang: diff_lang = "python"
-                elif "bash" in shebang or "/sh" in shebang: diff_lang = "bash"
-                elif "node" in shebang: diff_lang = "javascript"
-                elif "ruby" in shebang: diff_lang = "ruby"
-        diff_lang_cls = f' class="language-{diff_lang}"' if diff_lang else ""
+        highlight_lines = set()
+        deleted_blocks = []
+        for old_s, new_s in edit_strings:
+            new_stripped = new_s.rstrip("\n")
+            old_stripped = old_s.rstrip("\n")
+            if new_stripped:
+                new_lines = new_stripped.split("\n")
+                file_lines = [l.rstrip("\n") for l in lines]
+                for i in range(len(file_lines) - len(new_lines) + 1):
+                    if file_lines[i : i + len(new_lines)] == new_lines:
+                        highlight_lines.update(range(i, i + len(new_lines)))
+                        if old_stripped:
+                            deleted_blocks.append((i, old_stripped.split("\n")))
+                        break
 
-        if is_new_file:
-            # Raw code with language class; JS will wrap lines with diff-line after Prism highlights
-            parts.append(f'<pre><code{diff_lang_cls} data-diff-type="new-file">{html.escape(content)}</code></pre>')
-        else:
-            highlight_lines = set()
-            deleted_blocks = []
-            for old_s, new_s in edit_strings:
-                new_stripped = new_s.rstrip("\n")
-                old_stripped = old_s.rstrip("\n")
-                if new_stripped:
-                    new_lines = new_stripped.split("\n")
-                    file_lines = [l.rstrip("\n") for l in lines]
-                    for i in range(len(file_lines) - len(new_lines) + 1):
-                        if file_lines[i : i + len(new_lines)] == new_lines:
-                            highlight_lines.update(range(i, i + len(new_lines)))
-                            if old_stripped:
-                                deleted_blocks.append((i, old_stripped.split("\n")))
-                            break
+        del_before = {}
+        for insert_at, old_lines in deleted_blocks:
+            del_before[insert_at] = old_lines
 
-            del_before = {}
-            for insert_at, old_lines in deleted_blocks:
-                del_before[insert_at] = old_lines
+        line_types = ["new" if i in highlight_lines else "ctx" for i in range(len(lines))]
+        del_json = {str(k): v for k, v in del_before.items()}
+        meta = json.dumps({"types": line_types, "deleted": del_json, "context": 3, "idx": file_idx})
 
-            line_types = ["new" if i in highlight_lines else "ctx" for i in range(len(lines))]
-            del_json = {str(k): v for k, v in del_before.items()}
-            meta = json.dumps({"types": line_types, "deleted": del_json, "context": 3, "idx": file_idx})
-
-            # Hidden source block for Prism to highlight; JS builds collapsed/full views from it
-            parts.append(f'<div id="diff-source-{file_idx}" style="display:none"><pre><code{diff_lang_cls} data-diff-idx="{file_idx}">{html.escape(content)}</code></pre></div>')
-            parts.append(f'<script type="application/json" id="diff-meta-{file_idx}">{meta}</script>')
-            parts.append(f'<div id="diff-collapsed-{file_idx}"></div>')
-            parts.append(f'<div id="diff-full-{file_idx}" style="display:none"></div>')
+        # Hidden source block for Prism to highlight; JS builds collapsed/full views from it
+        parts.append(f'<div id="diff-source-{file_idx}" style="display:none"><pre><code{diff_lang_cls} data-diff-idx="{file_idx}">{html.escape(content)}</code></pre></div>')
+        parts.append(f'<script type="application/json" id="diff-meta-{file_idx}">{meta}</script>')
+        parts.append(f'<div id="diff-collapsed-{file_idx}"></div>')
+        parts.append(f'<div id="diff-full-{file_idx}" style="display:none"></div>')
 
     parts.append("</div></details>")
 
-# --- Render non-edited files (hidden until clicked from explorer) ---
+# --- Viewer sections for non-edited files (hidden, opened via sidebar click) ---
 for i, fp in enumerate(all_tree_files):
     if not os.path.isfile(fp):
         continue
     viewer_idx = len(file_order) + i
     basename = os.path.basename(fp)
-    ext = fp.rsplit(".", 1)[-1] if "." in fp else ""
     rel_path = os.path.relpath(fp, git_root) if fp.startswith(git_root + "/") else fp
 
     try:
@@ -625,50 +464,9 @@ for i, fp in enumerate(all_tree_files):
     parts.append(f'<div id="viewer-{viewer_idx}" class="viewer-section" style="display:none">')
     parts.append(f'<div class="viewer-header"><strong>{html.escape(basename)}</strong><span class="filepath">{html.escape(dir_display)}</span><span class="viewer-close" onclick="this.closest(\'.viewer-section\').style.display=\'none\';clearActiveNav()">&times;</span></div>')
     viewer_ext = fp.rsplit(".", 1)[-1].lower() if "." in fp else ""
-
-    if viewer_ext == "md":
-        # Render markdown as HTML
-        md_content = viewer_content
-        if md_content.startswith("---\n"):
-            end = md_content.find("\n---\n", 4)
-            if end != -1:
-                md_content = md_content[end + 5:]
-        try:
-            result = subprocess.run(
-                ["node", "-e",
-                 "const {marked}=require('marked');"
-                 "marked.setOptions({gfm:true});"
-                 "let md='';process.stdin.on('data',d=>md+=d);"
-                 "process.stdin.on('end',()=>process.stdout.write(marked.parse(md)));"],
-                input=md_content, capture_output=True, text=True, timeout=10,
-                env={**os.environ, "NODE_PATH": subprocess.run(
-                    ["npm", "root", "-g"], capture_output=True, text=True
-                ).stdout.strip()},
-            )
-            rendered = result.stdout if result.returncode == 0 else f"<pre>{html.escape(md_content)}</pre>"
-        except Exception:
-            rendered = f"<pre>{html.escape(md_content)}</pre>"
-        parts.append(f'<div class="file-content">{rendered}</div>')
-    else:
-        # Code file: Prism syntax highlighting
-        viewer_lang_map = {"py": "python", "sh": "bash", "bash": "bash", "zsh": "bash",
-                           "js": "javascript", "ts": "typescript", "json": "json",
-                           "yaml": "yaml", "yml": "yaml", "toml": "toml",
-                           "html": "markup", "css": "css", "go": "go", "rs": "rust",
-                           "rb": "ruby", "java": "java", "c": "c", "cpp": "cpp",
-                           "sql": "sql", "hjson": "json"}
-        viewer_lang = viewer_lang_map.get(viewer_ext, "")
-        if not viewer_lang:
-            first_line = viewer_content.split("\n", 1)[0] if viewer_content else ""
-            if first_line.startswith("#!"):
-                shebang = first_line.lower()
-                if "python" in shebang: viewer_lang = "python"
-                elif "bash" in shebang or "/sh" in shebang: viewer_lang = "bash"
-                elif "node" in shebang: viewer_lang = "javascript"
-                elif "ruby" in shebang: viewer_lang = "ruby"
-        viewer_lang_cls = f' class="language-{viewer_lang}"' if viewer_lang else ""
-        escaped_content = html.escape(viewer_content)
-        parts.append(f'<pre class="line-numbers"><code{viewer_lang_cls}>{escaped_content}</code></pre>')
+    viewer_lang = detect_language(viewer_ext, viewer_content.split("\n", 1)[0] if viewer_content else "")
+    viewer_lang_cls = f' class="language-{viewer_lang}"' if viewer_lang else ""
+    parts.append(f'<pre class="line-numbers"><code{viewer_lang_cls}>{html.escape(viewer_content)}</code></pre>')
     parts.append("</div>")
 
 parts.append('</div>')  # close .main
@@ -679,130 +477,11 @@ parts.append('<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/lib
 parts.append('<script>window.Prism = window.Prism || {}; Prism.manual = true;</script>')
 parts.append('<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>')
 parts.append('<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/line-numbers/prism-line-numbers.min.js"></script>')
-for lang in ["python", "bash", "javascript", "typescript", "json", "yaml", "toml", "markup", "css", "go", "rust", "java", "ruby", "sql", "c", "cpp"]:
+for lang in ["python", "bash", "javascript", "typescript", "json", "yaml", "toml", "markup", "markdown", "css", "go", "rust", "java", "ruby", "sql", "c", "cpp"]:
     parts.append(f'<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-{lang}.min.js"></script>')
 
 # Post-Prism: apply diff line wrapping to syntax-highlighted code
-parts.append("""<script>
-(function() {
-  // Trigger Prism highlighting before post-processing diff blocks
-  Prism.highlightAll(false);
-
-  // Helper: split highlighted HTML by newlines, preserving open span tags across lines
-  function splitHighlightedLines(html) {
-    var lines = html.split('\\n');
-    var result = [];
-    var openSpans = [];
-    for (var i = 0; i < lines.length; i++) {
-      // Prepend any open spans from previous line
-      var prefix = openSpans.join('');
-      var line = lines[i];
-      // Track open/close spans in this line
-      var tags = line.match(/<\\/?span[^>]*>/g) || [];
-      for (var j = 0; j < tags.length; j++) {
-        if (tags[j].indexOf('</') === 0) {
-          openSpans.pop();
-        } else {
-          openSpans.push(tags[j]);
-        }
-      }
-      // Close any open spans at end of line
-      var suffix = '';
-      for (var k = openSpans.length - 1; k >= 0; k--) { suffix += '</span>'; }
-      result.push(prefix + line + suffix);
-    }
-    return result;
-  }
-
-  // Helper: highlight deleted lines using Prism if language is available
-  function highlightDeleted(lines, lang) {
-    if (!lang || !Prism.languages[lang]) return lines.map(function(l) {
-      var d = document.createElement('span');
-      d.textContent = l;
-      return d.innerHTML;
-    });
-    var code = lines.join('\\n');
-    var highlighted = Prism.highlight(code, Prism.languages[lang], lang);
-    return splitHighlightedLines(highlighted);
-  }
-
-  // Process new-file blocks: wrap every line in diff-line
-  document.querySelectorAll('code[data-diff-type="new-file"]').forEach(function(codeEl) {
-    var highlighted = codeEl.innerHTML;
-    var lines = splitHighlightedLines(highlighted);
-    codeEl.innerHTML = lines.map(function(l) {
-      return '<span class="line diff-line">' + l + '</span>';
-    }).join('\\n');
-  });
-
-  // Process modified-file blocks: build collapsed + full views
-  document.querySelectorAll('code[data-diff-idx]').forEach(function(codeEl) {
-    var idx = parseInt(codeEl.getAttribute('data-diff-idx'));
-    var metaScript = document.getElementById('diff-meta-' + idx);
-    if (!metaScript) return;
-    var meta = JSON.parse(metaScript.textContent);
-    var types = meta.types;
-    var deleted = meta.deleted;
-    var CONTEXT = meta.context;
-    var lang = '';
-    var cls = codeEl.className || '';
-    var m = cls.match(/language-(\\w+)/);
-    if (m) lang = m[1];
-
-    var highlighted = codeEl.innerHTML;
-    var hLines = splitHighlightedLines(highlighted);
-
-    // Build all lines with diff markers (matching original Python logic)
-    var allLines = [];
-    var allTypes = [];
-    for (var i = 0; i < hLines.length; i++) {
-      if (deleted[String(i)]) {
-        var delHL = highlightDeleted(deleted[String(i)], lang);
-        for (var d = 0; d < delHL.length; d++) {
-          allLines.push('<span class="line diff-del-line">' + delHL[d] + '</span>');
-          allTypes.push('del');
-        }
-      }
-      var cls = (types[i] === 'new') ? 'line diff-line' : 'line';
-      allLines.push('<span class="' + cls + '">' + hLines[i] + '</span>');
-      allTypes.push(types[i]);
-    }
-
-    // Build collapsed view
-    var important = new Set();
-    for (var i = 0; i < allTypes.length; i++) {
-      if (allTypes[i] === 'new' || allTypes[i] === 'del') {
-        for (var j = Math.max(0, i - CONTEXT); j < Math.min(allTypes.length, i + CONTEXT + 1); j++) {
-          important.add(j);
-        }
-      }
-    }
-    var collapsedLines = [];
-    var lastShown = -1;
-    for (var i = 0; i < allLines.length; i++) {
-      if (important.has(i)) {
-        if (lastShown >= 0 && i > lastShown + 1) {
-          var skipped = i - lastShown - 1;
-          collapsedLines.push('<span class="line-skip">--- ' + skipped + ' lines hidden ---</span>');
-        }
-        collapsedLines.push(allLines[i]);
-        lastShown = i;
-      }
-    }
-    if (lastShown < allLines.length - 1) {
-      var skipped = allLines.length - lastShown - 1;
-      collapsedLines.push('<span class="line-skip">--- ' + skipped + ' lines hidden ---</span>');
-    }
-
-    // Populate collapsed and full divs (include language class so Prism CSS selectors match)
-    var langCls = lang ? ' class="language-' + lang + '"' : '';
-    var collapsedDiv = document.getElementById('diff-collapsed-' + idx);
-    var fullDiv = document.getElementById('diff-full-' + idx);
-    if (collapsedDiv) collapsedDiv.innerHTML = '<pre><code' + langCls + '>' + collapsedLines.join('\\n') + '</code></pre>';
-    if (fullDiv) fullDiv.innerHTML = '<pre><code' + langCls + '>' + allLines.join('\\n') + '</code></pre>';
-  });
-})();
-</script>""")
+parts.append(f'<script>{PRISM_JS}</script>')
 
 parts.append("</body></html>")
 

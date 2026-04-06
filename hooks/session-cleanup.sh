@@ -4,12 +4,7 @@
 # Only fires on actual exit, not on /resume.
 
 INPUT=$(cat)
-eval "$(echo "$INPUT" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-print(f'SESSION_ID={d.get(\"session_id\",\"\")}')
-print(f'REASON={d.get(\"reason\",\"\")}')
-" 2>/dev/null)"
+eval "$(echo "$INPUT" | jq -r '@sh "SESSION_ID=\(.session_id // "") REASON=\(.reason // "")"')"
 
 [[ -z "$SESSION_ID" ]] && exit 0
 [[ "$REASON" == "resume" ]] && exit 0

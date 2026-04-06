@@ -4,7 +4,7 @@ Visual feedback and file tools for Claude Code in [cmux](https://cmux.dev) — b
 
 ## What you get
 
-When Claude edits a file, a **browser tab** opens automatically showing the rendered result with changes highlighted in green:
+When Claude edits files, a **browser tab** opens automatically showing a combined diff view with VS Code-style sidebar and git status badges:
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -27,7 +27,7 @@ When Claude edits a file, a **browser tab** opens automatically showing the rend
 └──────────────────────────────────────────────┘
 ```
 
-- **viewtab** (automatic) — every file Claude edits/writes opens as a browser tab with diff highlighting (green background, auto-scroll to changes)
+- **viewtab** (automatic) — all files Claude edits/writes appear in a combined browser view with sidebar, diff highlighting (green additions, red deletions), and git status badges (U/A/M/D/R)
 - **edit / edittab** (manual) — open files in Vim via `! edit` or `! edittab` in Claude Code
 - **view / viewtab** (manual) — render any file in the browser via `! view` or `! viewtab`
 - **broot sidebar** (on-demand) — toggle with `Option + Arrow Up`, select files to open
@@ -50,18 +50,23 @@ Then add the hooks to your `~/.claude/settings.json` and the keybind to your `.z
 ### viewtab (automatic, primary)
 
 When Claude Code runs Edit or Write, the `view-open-file.py` PostToolUse hook:
-1. Captures the file path and new content
-2. Writes the diff to a temp file
-3. Calls `viewtab` which renders the file as HTML with changes highlighted
-4. Opens a browser tab in the same cmux pane
-5. Auto-scrolls to the changed section
+1. Appends the edit info (file, old/new content) to a session changes log (JSONL)
+2. Renders a **combined HTML page** with a VS Code-style sidebar and collapsible diff sections for all changed files
+3. Navigates the existing browser tab (or creates one) to the combined page
+4. Auto-scrolls to the first changed section
+
+The combined view includes:
+- **Sidebar** — file tree (from `git ls-files`) with changes list, status badges, and click-to-navigate
+- **Status badges** — follows VS Code git conventions: **U** (untracked, green), **A** (added, green), **M** (modified, yellow), **D** (deleted, red), **R** (renamed, teal)
+- **Diff highlighting** — added lines in green, deleted lines in red with strikethrough, collapsible context
+- **Dark mode** — automatic via `prefers-color-scheme`
 
 File types supported:
-- **Markdown** — rendered via `marked --gfm` with clean CSS
-- **Code files** — syntax-highlighted via Prism.js (Python, Bash, JS, TS, YAML, JSON, TOML)
-- **PDF, HTML, images** — opened natively
+- **Markdown** — rendered via `marked` (Node.js) with clean CSS
+- **Code files** — syntax-highlighted via Prism.js (Python, Bash, JS, TS, YAML, JSON, TOML, and more)
+- **PDF, HTML, images** — opened natively (via `! view` / `! viewtab` commands)
 
-Old tabs are automatically closed when a new prompt starts (`view-prompt-reset.sh`).
+The changes log resets when a new prompt starts (`view-prompt-reset.sh`).
 
 ### edit / edittab (manual)
 
@@ -130,14 +135,18 @@ cmux-toolkit/
 │   ├── edit                    # Open Vim in cmux pane
 │   └── edittab → edit          # Tab mode (via $0 detection)
 ├── hooks/                      # Claude Code hooks (→ ~/.claude/hooks/)
-│   ├── view-open-file.py       # PostToolUse → browser tab with diff
-│   ├── view-prompt-reset.sh    # UserPromptSubmit → close old tabs
+│   ├── view-open-file.py       # PostToolUse → combined browser view with diffs
+│   ├── view-prompt-reset.sh    # UserPromptSubmit → reset changes log
 │   ├── session-cleanup.sh      # SessionEnd → close vim, broot, browser
+│   ├── fix-whitespace-escape.py  # PreToolUse → iCloud path fix
 │   ├── broot-pane.sh           # Opt+↑ broot sidebar toggle / --open
 │   ├── broot-open-file.sh      # broot Enter → viewtab or Vim
 │   ├── vim-pane-open.sh        # Optional: auto Vim subpane on start
+│   ├── vim-open-file.py        # Optional: send file paths to Vim
 │   ├── vim-prompt-reset.sh     # Optional: reset Vim buffers on prompt
-│   └── fix-whitespace-escape.py  # iCloud path fix
+│   └── templates/              # HTML assets for view-open-file.py
+│       ├── view-changes.css    # Sidebar, diff, and dark mode styles
+│       └── view-changes.js     # Tree navigation and diff toggle logic
 ├── config/
 │   ├── cmux/
 │   │   └── config.ghostty      # Dark theme + inactive pane dimming
@@ -171,7 +180,7 @@ The theme uses MesloLGS Nerd Font — install via `brew install font-meslo-lg-ne
 - macOS with [Homebrew](https://brew.sh)
 - [cmux](https://cmux.dev) terminal multiplexer
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-- [Node.js](https://nodejs.org) (for Markdown rendering via `npx marked`)
+- [Node.js](https://nodejs.org) + `marked` package (for Markdown rendering)
 - `broot` and `jq` (installed automatically by setup.sh)
 
 ## Updating
