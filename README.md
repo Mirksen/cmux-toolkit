@@ -85,13 +85,12 @@ PostToolUse  ─→ view-open-file.py ─────→ viewtab → browser tab
 
 UserPromptSubmit ─→ view-prompt-reset.sh → closes old browser tabs
 
-SessionEnd   ─→ view-close.sh ─────────→ closes all browser tabs
-             ─→ broot-pane-close.sh ───→ cleans up broot marker files
+SessionEnd   ─→ session-cleanup.sh ───→ closes vim, broot, browser tabs
 
 PreToolUse   ─→ fix-whitespace-escape.py → fixes iCloud path escaping
 
-Keybind      ─→ broot-pane-toggle-dispatch.sh → cmux: broot-pane-toggle-cmux.sh
-  (Opt+↑)                                      iTerm2: broot-pane-toggle.sh
+Keybind      ─→ broot-pane.sh ──────→ toggle broot sidebar
+  (Opt+↑)
 ```
 
 ### Optional: auto Vim subpane
@@ -100,8 +99,8 @@ If you prefer the old behavior where Vim opens automatically on session start, a
 
 ```json
 "SessionStart": [
-  { "matcher": "startup", "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/vim-pane-open-dispatch.sh" }] },
-  { "matcher": "resume",  "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/vim-pane-open-dispatch.sh" }] }
+  { "matcher": "startup", "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/vim-pane-open.sh" }] },
+  { "matcher": "resume",  "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/vim-pane-open.sh" }] }
 ]
 ```
 
@@ -117,7 +116,7 @@ To auto-open broot on session start, add:
 
 ```json
 "SessionStart": [
-  { "matcher": "startup", "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/broot-pane-open.sh" }] }
+  { "matcher": "startup", "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/broot-pane.sh --open" }] }
 ]
 ```
 
@@ -133,11 +132,11 @@ cmux-toolkit/
 ├── hooks/                      # Claude Code hooks (→ ~/.claude/hooks/)
 │   ├── view-open-file.py       # PostToolUse → browser tab with diff
 │   ├── view-prompt-reset.sh    # UserPromptSubmit → close old tabs
-│   ├── view-close.sh           # SessionEnd → close all tabs
-│   ├── broot-pane-toggle-*.sh  # Opt+↑ broot sidebar toggle
-│   ├── broot-pane-close.sh     # SessionEnd → broot cleanup
+│   ├── session-cleanup.sh      # SessionEnd → close vim, broot, browser
+│   ├── broot-pane.sh           # Opt+↑ broot sidebar toggle / --open
 │   ├── broot-open-file.sh      # broot Enter → viewtab or Vim
-│   ├── vim-*.sh / vim-*.py     # Optional Vim subpane lifecycle
+│   ├── vim-pane-open.sh        # Optional: auto Vim subpane on start
+│   ├── vim-prompt-reset.sh     # Optional: reset Vim buffers on prompt
 │   └── fix-whitespace-escape.py  # iCloud path fix
 ├── config/
 │   ├── cmux/

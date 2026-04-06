@@ -20,7 +20,7 @@ Set up the cmux-toolkit (viewtab browser tabs, manual Vim, on-demand broot) for 
    # === broot sidebar toggle (Opt+ArrowUp) ===
    source "$HOME/.config/broot/launcher/bash/br"
    broot-toggle() {
-       bash ~/.claude/hooks/broot-pane-toggle-dispatch.sh
+       bash ~/.claude/hooks/broot-pane.sh
        zle reset-prompt
    }
    zle -N broot-toggle
@@ -44,8 +44,7 @@ Set up the cmux-toolkit (viewtab browser tabs, manual Vim, on-demand broot) for 
        { "matcher": "Edit|Write", "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/view-open-file.py" }] }
      ],
      "SessionEnd": [
-       { "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/view-close.sh" }] },
-       { "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/broot-pane-close.sh" }] }
+       { "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/session-cleanup.sh" }] }
      ]
    }
 
@@ -75,8 +74,8 @@ To also auto-open a Vim subpane on session start (old behavior), add these to th
 
 ```json
 "SessionStart": [
-  { "matcher": "startup", "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/vim-pane-open-dispatch.sh" }] },
-  { "matcher": "resume",  "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/vim-pane-open-dispatch.sh" }] }
+  { "matcher": "startup", "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/vim-pane-open.sh" }] },
+  { "matcher": "resume",  "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/vim-pane-open.sh" }] }
 ],
 "PostToolUse": [
   { "matcher": "Read|Edit|Write", "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/vim-open-file.py" }] }
