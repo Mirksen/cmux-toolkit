@@ -1,33 +1,33 @@
 #!/bin/bash
-# Claude Code UserPromptSubmit hook: close old view tabs before new prompt.
-# Reads tracked surface IDs and closes non-focused ones.
+# Claude Code UserPromptSubmit hook: reset changes view for new prompt cycle.
+# Clears the changes log and navigates the browser tab to an empty state.
 
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null)
 [[ -z "$SESSION_ID" ]] && exit 0
 
+# Clear the changes log
+rm -f "$HOME/.claude/view-changes/${SESSION_ID}.jsonl" 2>/dev/null
+
+# Navigate existing browser tab to a blank "waiting" page
 TRACKING_FILE="$HOME/.claude/view-surfaces/${SESSION_ID}.txt"
-[[ ! -f "$TRACKING_FILE" ]] && exit 0
-
-# Get currently focused/selected surfaces from cmux tree
-FOCUSED=$(cmux tree 2>/dev/null | grep -E '\[selected\]|◀ active' | grep -o 'surface:[0-9]*' || true)
-
-# Close each tracked surface unless it's focused
-# First verify the surface exists in cmux tree to avoid closing random surfaces
-TREE=$(cmux tree 2>/dev/null || true)
-
-while IFS= read -r surface_ref; do
-  [[ -z "$surface_ref" ]] && continue
-  # Skip if surface doesn't exist in current tree
-  echo "$TREE" | grep -qF "$surface_ref" || continue
-  if echo "$FOCUSED" | grep -qF "$surface_ref"; then
-    # Surface is focused — keep it
-    continue
+if [[ -f "$TRACKING_FILE" ]]; then
+  SURFACE=$(tail -1 "$TRACKING_FILE" | tr -d '[:space:]')
+  if [[ -n "$SURFACE" ]]; then
+    BLANK="/tmp/view-changes-${SESSION_ID}.html"
+    cat > "$BLANK" << 'ENDHTML'
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+:root { --bg: #fff; --fg: #86868b; }
+@media (prefers-color-scheme: dark) { :root { --bg: #1e1e1e; --fg: #858585; } }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  display: flex; align-items: center; justify-content: center; height: 90vh;
+  color: var(--fg); background: var(--bg); }
+p { font-size: 1.1em; }
+</style></head><body><p>Waiting for changes...</p></body></html>
+ENDHTML
+    cmux browser --surface "$SURFACE" navigate "file://$BLANK" 2>/dev/null || true
   fi
-  cmux close-surface --surface "$surface_ref" 2>/dev/null || true
-done < "$TRACKING_FILE"
-
-# Clear tracking file
-: > "$TRACKING_FILE"
+fi
 
 exit 0

@@ -41,14 +41,22 @@ for pkg in broot jq; do
     fi
 done
 
-if ! command -v npx &>/dev/null; then
-    warn "npx not found — Markdown rendering in viewtab requires Node.js."
+if ! command -v node &>/dev/null; then
+    warn "Node.js not found — Markdown rendering in viewtab requires Node.js."
     warn "Install Node.js: brew install node"
+else
+    # Ensure marked is available globally (CLI is broken in v17, but API works via NODE_PATH)
+    if ! node -e "require('marked')" 2>/dev/null; then
+        NODE_PATH="$(npm root -g 2>/dev/null)" node -e "require('marked')" 2>/dev/null || {
+            info "Installing marked globally for Markdown rendering..."
+            npm install -g marked
+        }
+    fi
 fi
 
 # ── 2. Create runtime directories ──
 info "Creating directories..."
-mkdir -p ~/.claude/hooks ~/.claude/broot-panes ~/.claude/vim-panes ~/.claude/view-surfaces ~/.vim ~/.config/broot/skins ~/.local/bin
+mkdir -p ~/.claude/hooks ~/.claude/broot-panes ~/.claude/vim-panes ~/.claude/view-surfaces ~/.claude/view-changes ~/.vim ~/.config/broot/skins ~/.local/bin
 
 # ── 3. Fix broot verbs.hjson — replace __HOME__ placeholder with actual $HOME ──
 info "Preparing broot config..."

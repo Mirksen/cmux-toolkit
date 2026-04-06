@@ -15,9 +15,29 @@ verbs: [
     # With cmux + viewtab: opens rendered browser tab
     # Without either: opens Vim in a split pane below broot
     ###########################################################
+    # Enter / double-click → open file in Vim
+    {
+        invocation: vim-open
+        key: enter
+        apply_to: file
+        external: "$EDITOR {file}"
+        leave_broot: false
+    }
+
+
+
+    # Enter on directory → navigate into it (default behavior)
+    {
+        invocation: dir-enter
+        key: enter
+        apply_to: directory
+        internal: ":focus"
+    }
+
+    # Alt+Enter → open file via dispatch script (viewtab/browser)
     {
         invocation: open-file
-        key: enter
+        key: alt-enter
         apply_to: file
         external: [
             "bash"
@@ -27,12 +47,17 @@ verbs: [
         leave_broot: false
     }
 
-    # Enter on directory → navigate into it (default behavior)
+    # Right arrow → expand directory inline (VS Code-like)
     {
-        invocation: dir-enter
-        key: enter
+        key: right
         apply_to: directory
-        internal: ":focus"
+        internal: ":open_stay"
+    }
+
+    # Left arrow → go back (restores previous state + selection)
+    {
+        key: left
+        internal: ":back"
     }
 
     # Ctrl+P → toggle file preview panel
