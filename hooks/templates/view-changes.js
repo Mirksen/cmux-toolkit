@@ -72,3 +72,29 @@ function openViewer(idx) {
 function clearActiveNav() {
   document.querySelectorAll('.tree-active').forEach(el => el.classList.remove('tree-active'));
 }
+// --- Resizable sidebar ---
+(function() {
+  var handle = document.getElementById('resize-handle');
+  var sidebar = document.querySelector('.sidebar');
+  if (!handle || !sidebar) return;
+  var dragging = false;
+  handle.addEventListener('mousedown', function(e) {
+    e.preventDefault();
+    dragging = true;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  });
+  document.addEventListener('mousemove', function(e) {
+    if (!dragging) return;
+    var w = Math.max(120, Math.min(e.clientX, window.innerWidth - 200));
+    sidebar.style.width = w + 'px';
+  });
+  document.addEventListener('mouseup', function() {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+})();

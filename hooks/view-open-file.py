@@ -180,6 +180,18 @@ for fp in file_order:
     if not os.path.isfile(fp):
         file_status[fp] = "D"
 
+# --- Capture git diff --stat for the summary section ---
+git_diff_stat = ""
+try:
+    result = subprocess.run(
+        ["git", "diff", "--stat"],
+        capture_output=True, text=True, timeout=5, cwd=git_root,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        git_diff_stat = result.stdout.strip()
+except Exception:
+    pass
+
 # Split changed files into in-project and external
 changed_set = set(file_order)
 external_files = []
@@ -361,11 +373,19 @@ parts.append(f'<div class="section-header" onclick="this.classList.toggle(\'coll
 parts.append(f'<div class="section-content">{tree_html}</div>')
 
 parts.append('</div>')
+parts.append('<div class="resize-handle" id="resize-handle"></div>')
 
 # --- Main content ---
 parts.append('<div class="main">')
 total_edits = len(changes)
 parts.append(f'<h1>Changes &mdash; {total_edits} edit{"s" if total_edits != 1 else ""} across {len(file_order)} file{"s" if len(file_order) != 1 else ""}</h1>')
+
+# --- Git diff stat summary ---
+if git_diff_stat:
+    parts.append('<details class="diff-stat-section">')
+    parts.append('<summary><strong>git diff --stat</strong></summary>')
+    parts.append(f'<div class="file-content"><pre class="diff-stat"><code>{html.escape(git_diff_stat)}</code></pre></div>')
+    parts.append('</details>')
 
 # --- Render each file ---
 for fp in file_order:
