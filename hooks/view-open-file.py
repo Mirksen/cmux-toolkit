@@ -159,6 +159,11 @@ for fp in file_order:
             file_status[fp] = "R"
         elif code.startswith("D") or code.startswith(" D"):
             file_status[fp] = "D"
+        elif code == "" and fp not in all_files:
+            # Not in git status output AND not tracked by git → untracked
+            # (happens when file is inside a new untracked directory —
+            #  git status --porcelain only lists the directory, not individual files)
+            file_status[fp] = "U"
         else:
             file_status[fp] = "M"
     else:
@@ -416,8 +421,9 @@ for fp in file_order:
     diff_lang = detect_language(ext, lines[0] if lines else "")
     diff_lang_cls = f' class="language-{diff_lang}"' if diff_lang else ""
 
-    if is_new_file:
-        # Raw code with language class; JS will wrap lines with diff-line after Prism highlights
+    if is_new_file or not edit_strings:
+        # New/untracked file or file rewritten via Write with no edit pairs:
+        # show full content highlighted as new (no collapsed diff)
         parts.append(f'<pre><code{diff_lang_cls} data-diff-type="new-file">{html.escape(content)}</code></pre>')
     else:
         highlight_lines = set()
