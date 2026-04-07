@@ -57,6 +57,20 @@ const server: Plugin = async (ctx) => {
   }
 
   return {
+    // --- PreToolUse equivalent: fix backslash-escaped whitespace in Bash commands ---
+    "tool.execute.before": async (input, output) => {
+      const toolName = normalizeToolName(input.tool)
+      if (toolName !== "Bash") return
+
+      const cmd = output.args?.command
+      if (typeof cmd === "string") {
+        const fixed = cmd.replace(/(?<!\\)\\ /g, " ")
+        if (fixed !== cmd) {
+          output.args.command = fixed
+        }
+      }
+    },
+
     // --- PostToolUse equivalent: fire after edit/write only ---
     "tool.execute.after": async (input, _output) => {
       const toolName = normalizeToolName(input.tool)

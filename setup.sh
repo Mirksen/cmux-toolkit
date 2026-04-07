@@ -34,8 +34,7 @@ for pkg in broot jq; do
     if ! command -v "$pkg" &>/dev/null; then
         if command -v brew &>/dev/null; then
             info "Installing $pkg via brew..."
-            BUFFER="br"
-    zle accept-lineew install "$pkg"
+            brew install "$pkg"
         else
             err "$pkg not found and brew not available. Install $pkg manually."
             exit 1
@@ -148,8 +147,7 @@ fi
 # ── 10. Run broot --install (creates shell launcher) ──
 if [[ ! -f "$HOME/.config/broot/launcher/bash/br" ]]; then
     info "Running broot --install..."
-    BUFFER="br"
-    zle accept-lineoot --install 2>/dev/null || true
+    broot --install 2>/dev/null || true
 fi
 
 # ── 11. Claude Code settings.json — auto-merge hooks ──
