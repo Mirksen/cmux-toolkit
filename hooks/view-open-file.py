@@ -382,9 +382,21 @@ parts.append(f'<h1>Changes &mdash; {total_edits} edit{"s" if total_edits != 1 el
 
 # --- Git diff stat summary ---
 if git_diff_stat:
+    # Colorize +/- in stat bars (e.g. "file | 10 ++++------")
+    stat_lines = []
+    for sl in git_diff_stat.split("\n"):
+        escaped = html.escape(sl)
+        # Match the trailing +/- bar portion after the number
+        escaped = re.sub(
+            r'(\| +\d+\s*)(\+*?)(-*?)$',
+            lambda m: m.group(1) + (f'<span class="stat-add">{m.group(2)}</span>' if m.group(2) else '') + (f'<span class="stat-del">{m.group(3)}</span>' if m.group(3) else ''),
+            escaped
+        )
+        stat_lines.append(escaped)
+    stat_html = "\n".join(stat_lines)
     parts.append('<details class="diff-stat-section">')
     parts.append('<summary><strong>git diff --stat</strong></summary>')
-    parts.append(f'<div class="file-content"><pre class="diff-stat"><code>{html.escape(git_diff_stat)}</code></pre></div>')
+    parts.append(f'<div class="file-content"><pre class="diff-stat"><code>{stat_html}</code></pre></div>')
     parts.append('</details>')
 
 # --- Render each file ---
