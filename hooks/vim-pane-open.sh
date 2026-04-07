@@ -1,73 +1,81 @@
 #!/bin/bash
-# Claude Code SessionStart hook: open a Vim pane below for Claude-Vim sync.
-# Each Claude session gets its own Vim pane, bound by session_id.
-# On /resume: reuses the existing Vim pane, rebinds it to the new session.
-# Only runs in iTerm2.
+# SessionStart hook: open a Vim pane below for AI-Vim sync.
+# Works with Claude Code, OpenCode, and any tool that pipes compatible JSON to stdin.
+#
+# Marker file (~/.cmux-toolkit/vim-panes/<SURFACE_ID>.ref) format:
+#   line 1: vim surface ref (e.g. surface:6)
+#   line 2: session_id that Vim was started/rebound with
 
-if [[ "$TERM_PROGRAM" != "iTerm.app" ]]; then
-    exit 0
-fi
+source "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+
+DEBUG_LOG="/tmp/cmux-vim-debug.log"
+log() { echo "$(date '+%H:%M:%S.%N' | cut -c1-12): $*" >> "$DEBUG_LOG"; }
+
+[[ -z "$CMUX_WORKSPACE_ID" ]] && exit 0
 
 INPUT=$(cat)
+log "--- START ---"
 
-echo "$INPUT" > /tmp/claude-vim-hook-debug.json
+# Single jq call to extract both fields
+eval "$(echo "$INPUT" | jq -r '@sh "SESSION_ID=\(.session_id // "") CWD=\(.cwd // "")"')"
+log "session=$SESSION_ID"
+[[ -z "$SESSION_ID" ]] && exit 0
 
-SESSION_ID=$(echo "$INPUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null)
-
-if [[ -z "$SESSION_ID" ]]; then
-    exit 0
-fi
-
-# Persist session ID so PostToolUse hook and Vim can use it
-if [[ -n "$CLAUDE_ENV_FILE" ]]; then
-    echo "export CLAUDE_SESSION_ID='$SESSION_ID'" >> "$CLAUDE_ENV_FILE"
-fi
-
-# Write session ID to a well-known file that broot-toggle can read.
-# Key by CWD (hashed) — each project dir maps to one active session.
-CWD=$(echo "$INPUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('cwd',''))" 2>/dev/null)
+# Write session ID keyed by CWD (used by broot-toggle and cmux_session_id)
 if [[ -n "$CWD" ]]; then
-    mkdir -p "$HOME/.claude/broot-panes"
-    CWD_HASH=$(echo -n "$CWD" | md5 -q)
-    echo "$SESSION_ID" > "$HOME/.claude/broot-panes/${CWD_HASH}.session"
+    mkdir -p "$BROOT_PANES_DIR"
+    echo "$SESSION_ID" > "$BROOT_PANES_DIR/$(cmux_hash "$CWD").session"
 fi
 
-# Check if a Vim pane already exists in this tab
-VIM_RUNNING=$(osascript <<'APPLESCRIPT'
-tell application "iTerm2"
-    tell current tab of current window
-        repeat with aSession in sessions
-            set sessionName to (name of aSession)
-            if sessionName contains "vim" or sessionName contains "Vim" then
-                return "yes"
-            end if
-        end repeat
-    end tell
-end tell
-return "no"
-APPLESCRIPT
-)
+mkdir -p "$VIM_PANES_DIR"
+VIM_PANE_MARKER="$VIM_PANES_DIR/${CMUX_SURFACE_ID}.ref"
 
-if [[ "$VIM_RUNNING" == "yes" ]]; then
-    # Vim pane exists (e.g. /resume) — rebind it to the new session.
-    # Find the old signal file that Vim is currently polling and write
-    # a ::rebind:: directive so Vim switches to the new session's file.
-    OLD_SIGNAL=$(ls -t "$HOME"/.vim/claude-open-file-????????-????-????-????-???????????? 2>/dev/null | head -1)
-    if [[ -n "$OLD_SIGNAL" ]]; then
-        echo "::rebind::$SESSION_ID" >> "$OLD_SIGNAL"
+# Get caller pane ref for refocus later (one cmux call, ~250ms)
+CALLER_PANE=$(cmux identify 2>/dev/null | jq -r '.caller.pane_ref' 2>/dev/null)
+
+# --- Resume path: check if a Vim pane already exists for this surface ---
+if [[ -f "$VIM_PANE_MARKER" ]]; then
+    VIM_SURFACE=$(sed -n '1p' "$VIM_PANE_MARKER")
+    OLD_SESSION=$(sed -n '2p' "$VIM_PANE_MARKER")
+    log "resume check: vim_surface=$VIM_SURFACE old_session=$OLD_SESSION"
+
+    # Check if Vim is actually running by reading its screen
+    if [[ -n "$VIM_SURFACE" ]]; then
+        SCREEN=$(cmux read-screen --surface "$VIM_SURFACE" --lines 3 2>/dev/null)
+        if echo "$SCREEN" | grep -qE "NORMAL|INSERT|VISUAL|REPLACE|COMMAND"; then
+            # Vim alive — rebind to new session
+            log "rebinding"
+            OLD_SIGNAL="$(cmux_signal_file "$OLD_SESSION")"
+            [[ -f "$OLD_SIGNAL" ]] && echo "::rebind::$SESSION_ID" >> "$OLD_SIGNAL"
+            : > "$(cmux_signal_file "$SESSION_ID")"
+            printf '%s\n%s\n' "$VIM_SURFACE" "$SESSION_ID" > "$VIM_PANE_MARKER"
+            log "--- DONE (rebind) ---"
+            exit 0
+        fi
     fi
-    # Also create the new session's signal file (truncate to avoid stale ::quit::)
-    : > "$HOME/.vim/claude-open-file-$SESSION_ID"
-    exit 0
+
+    # Vim dead — close zombie pane, clean marker
+    log "zombie cleanup"
+    [[ -n "$VIM_SURFACE" ]] && cmux send --surface "$VIM_SURFACE" "exit\n" 2>/dev/null
+    rm -f "$VIM_PANE_MARKER"
 fi
 
-# No Vim pane — create one
-osascript <<APPLESCRIPT
-tell application "iTerm2"
-    tell current session of current tab of current window
-        set newSession to (split horizontally with default profile command "env CLAUDE_SESSION_ID='$SESSION_ID' vim")
-    end tell
-end tell
-APPLESCRIPT
+# --- Fresh start: create new Vim sub-pane ---
+: > "$(cmux_signal_file "$SESSION_ID")"
 
+# new-split returns "OK surface:N workspace:N"
+NEW_SURFACE=$(cmux new-split down --surface "$CMUX_SURFACE_ID" 2>&1 | grep -oE 'surface:[0-9a-zA-Z-]+' | head -1)
+[[ -z "$NEW_SURFACE" ]] && { log "ERROR: split failed"; exit 1; }
+log "split: $NEW_SURFACE"
+
+# Save marker
+printf '%s\n%s\n' "$NEW_SURFACE" "$SESSION_ID" > "$VIM_PANE_MARKER"
+
+# Start Vim — exec so pane closes when Vim exits
+cmux respawn-pane --surface "$NEW_SURFACE" --command "CMUX_SESSION_ID='$SESSION_ID' exec vim" 2>/dev/null
+
+# Refocus caller pane explicitly (last-pane is unreliable with multiple panes)
+[[ -n "$CALLER_PANE" ]] && cmux focus-pane "$CALLER_PANE" 2>/dev/null
+
+log "--- DONE ---"
 exit 0

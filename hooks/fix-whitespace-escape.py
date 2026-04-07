@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-r"""Claude Code PreToolUse hook: fix backslash-escaped whitespace in Bash commands.
+r"""PreToolUse hook: fix backslash-escaped whitespace in Bash commands.
 
 macOS iCloud Drive paths contain spaces (~/Library/Mobile Documents/...).
-Claude Code's bare-repo-attack prevention blocks backslash-escaped whitespace.
+Some AI coding tools block backslash-escaped whitespace as a security measure.
 This hook rewrites `\ ` to ` ` so the command can proceed.
 """
 import json, sys, re

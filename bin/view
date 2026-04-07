@@ -6,10 +6,11 @@
 #
 # Diff highlighting: set VIEW_DIFF_FILE to a temp file containing the new_string.
 # Changed lines will be highlighted in green with auto-scroll.
+# Surface reuse: set VIEW_REUSE_SURFACE to navigate an existing tab instead of creating new.
 
 set -euo pipefail
 
-# Detect mode from command name
+# Detect mode: "view" = new split pane, "viewtab" = reuse existing tab
 CMD_NAME=$(basename "$0")
 MODE="split"
 [[ "$CMD_NAME" == "viewtab" ]] && MODE="tab"
@@ -82,7 +83,7 @@ else:
       echo "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
       echo "<style>${CSS}</style>"
       echo "<title>${BASENAME}</title></head><body>"
-      echo "$CONTENT" | npx --yes marked --gfm 2>/dev/null
+      echo "$CONTENT" | NODE_PATH="$(npm root -g 2>/dev/null)" node -e "const{marked}=require('marked');marked.setOptions({gfm:true});let md='';process.stdin.on('data',d=>md+=d);process.stdin.on('end',()=>process.stdout.write(marked.parse(md)))" 2>/dev/null || echo "$CONTENT"
       echo "$SCROLL_SCRIPT"
       echo "</body></html>"
     } > "$OUT"
@@ -164,17 +165,32 @@ esac
 [[ -n "$URL" && "$URL" == file:///tmp/* ]] && URL="${URL}#source=${FILE}"
 
 # --- Open based on mode ---
+REUSE_SURFACE="${VIEW_REUSE_SURFACE:-}"
+
 if [[ "$MODE" == "tab" ]]; then
-  # Use cmux identify to reliably get our pane and surface
-  IDENT=$(cmux identify 2>/dev/null || true)
-  OUR_PANE=$(echo "$IDENT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('caller',{}).get('pane_ref',''))" 2>/dev/null || true)
-  OUR_SURFACE=$(echo "$IDENT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('caller',{}).get('surface_ref',''))" 2>/dev/null || true)
-  if [[ -n "$OUR_PANE" ]]; then
-    cmux new-surface --type browser --pane "$OUR_PANE" --url "$URL"
-    # Refocus the original terminal tab so new tabs open in background
-    [[ -n "$OUR_SURFACE" ]] && cmux move-surface --surface "$OUR_SURFACE" --focus true 2>/dev/null
-  else
-    cmux browser new "$URL"
+  # Try to reuse an existing browser surface (navigate instead of creating new tab)
+  if [[ -n "$REUSE_SURFACE" ]]; then
+    if cmux browser --surface "$REUSE_SURFACE" navigate "$URL" 2>/dev/null; then
+      # Navigated existing tab — no focus change, no flash
+      echo "OK $REUSE_SURFACE"
+    else
+      # Surface gone — fall through to create a new one
+      REUSE_SURFACE=""
+    fi
+  fi
+
+  if [[ -z "$REUSE_SURFACE" ]]; then
+    # Use cmux identify to reliably get our pane and surface
+    IDENT=$(cmux identify 2>/dev/null || true)
+    OUR_PANE=$(echo "$IDENT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('caller',{}).get('pane_ref',''))" 2>/dev/null || true)
+    OUR_SURFACE=$(echo "$IDENT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('caller',{}).get('surface_ref',''))" 2>/dev/null || true)
+    if [[ -n "$OUR_PANE" ]]; then
+      cmux new-surface --type browser --pane "$OUR_PANE" --url "$URL"
+      # Refocus the original terminal tab to minimise browser flash
+      [[ -n "$OUR_SURFACE" ]] && cmux move-surface --surface "$OUR_SURFACE" --focus true 2>/dev/null
+    else
+      cmux browser new "$URL"
+    fi
   fi
 else
   cmux browser new "$URL"

@@ -1,0 +1,88 @@
+###############################################################
+# Light skin — clean white background for light terminal themes
+# Counterpart to skin-p10k.hjson (dark mode)
+# Colors use ANSI codes for portability across terminals
+###############################################################
+
+skin: {
+    default: gray(2) none / gray(4) none
+    tree: gray(14) None / gray(18) None
+    parent: gray(7) None / gray(10) None
+    file: gray(3) None / gray(8) None
+    directory: ansi(25) None bold / ansi(25) None
+    exe: ansi(30) None
+    link: ansi(93) None
+    pruning: gray(12) None Italic
+    perm__: gray(18) None
+    perm_r: ansi(25) None
+    perm_w: ansi(160) None
+    perm_x: ansi(28) None
+    owner: ansi(130) None
+    group: ansi(95) None
+    count: ansi(130) gray(22)
+    dates: ansi(25) None
+    sparse: ansi(172) None
+    content_extract: ansi(23) None
+    content_match: ansi(28) None bold
+    device_id_major: ansi(130) None
+    device_id_sep: ansi(245) None
+    device_id_minor: ansi(130) None
+    git_branch: ansi(25) None bold
+    git_insertions: ansi(28) None
+    git_deletions: ansi(160) None
+    git_status_current: gray(17) None
+    git_status_modified: ansi(160) None
+    git_status_new: ansi(28) None bold
+    git_status_ignored: gray(17) None
+    git_status_conflicted: ansi(196) None bold
+    git_status_other: ansi(130) None
+    selected_line: None gray(20) / None gray(22)
+    char_match: ansi(28) None bold
+    file_error: Red None
+    flag_label: gray(8) gray(22)
+    flag_value: ansi(25) gray(22) bold
+    input: gray(2) gray(23) / gray(8) None
+    status_error: White ansi(124)
+    status_job: ansi(25) gray(22)
+    status_normal: gray(3) gray(22) / gray(22) gray(22)
+    status_italic: ansi(25) gray(22) / gray(22) gray(22)
+    status_bold: ansi(25) gray(22) bold / gray(22) gray(22)
+    status_code: ansi(25) gray(22) / gray(22) gray(22)
+    status_ellipsis: gray(4) gray(23) / gray(22) gray(22)
+    purpose_normal: gray(3) gray(22)
+    purpose_italic: ansi(25) gray(22)
+    purpose_bold: ansi(25) gray(22) bold
+    purpose_ellipsis: gray(3) gray(22)
+    scrollbar_track: gray(20) None / gray(22) None
+    scrollbar_thumb: ansi(25) None / gray(10) None
+    help_paragraph: gray(3) None
+    help_bold: ansi(25) None bold
+    help_italic: ansi(25) None
+    help_code: gray(2) gray(22)
+    help_headers: ansi(25) None bold
+    help_table_border: gray(16) None
+    preview: gray(3) gray(23) / gray(5) gray(22)
+    preview_title: gray(1) gray(22) / gray(3) gray(22)
+    preview_line_number: gray(14) gray(22)
+    preview_separator: gray(18) None
+    preview_match: None ansi(158)
+    hex_null: gray(15) None
+    hex_ascii_graphic: gray(5) None
+    hex_ascii_whitespace: ansi(143) None
+    hex_ascii_other: ansi(172) None
+    hex_non_ascii: ansi(160) None
+    staging_area_title: gray(2) gray(22) / gray(4) gray(22)
+    mode_command_mark: gray(18) ansi(25) bold
+    good_to_bad_0: ansi(28)
+    good_to_bad_1: ansi(28)
+    good_to_bad_2: ansi(70)
+    good_to_bad_3: ansi(106)
+    good_to_bad_4: ansi(142)
+    good_to_bad_5: ansi(178)
+    good_to_bad_6: ansi(214)
+    good_to_bad_7: ansi(208)
+    good_to_bad_8: ansi(160)
+    good_to_bad_9: ansi(196)
+}
+
+syntax_theme: base16-ocean.light
