@@ -131,3 +131,4 @@ pre.diff-stat code .line { display: inline; }
 pre.diff-stat code .line::before { display: none; }
 .stat-add { color: var(--diff-fg); }
 .stat-del { color: var(--del-fg); }
+.stat-scope { color: var(--fg-muted); font-weight: 400; font-size: 0.85em; margin-left: 0.5rem; }

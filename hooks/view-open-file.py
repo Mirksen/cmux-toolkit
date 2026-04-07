@@ -395,7 +395,7 @@ if git_diff_stat:
         stat_lines.append(escaped)
     stat_html = "\n".join(stat_lines)
     parts.append('<details class="diff-stat-section">')
-    parts.append('<summary><strong>git diff --stat</strong></summary>')
+    parts.append('<summary><strong>git diff --stat</strong><span class="stat-scope">all uncommitted changes</span></summary>')
     parts.append(f'<div class="file-content"><pre class="diff-stat"><code>{stat_html}</code></pre></div>')
     parts.append('</details>')
 
